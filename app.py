@@ -1,4 +1,5 @@
 from io import BytesIO
+from math import cos, pi, sin
 
 import numpy as np
 import streamlit as st
@@ -6,28 +7,19 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from sklearn.cluster import KMeans
 
 
-st.set_page_config(page_title="OrnaMap", page_icon="OM", layout="wide")
+st.set_page_config(page_title="OrnaMap AR", page_icon="OM", layout="wide")
 
-CANVAS_SIZE = (980, 680)
+CANVAS = (1280, 820)
+SURFACE_QUAD = ((420, 185), (945, 248), (872, 657), (330, 570))
 
-TEMPLATES = {
-    "Шоппер": {"box": (300, 175, 680, 555), "kind": "bag"},
-    "Футболка": {"box": (355, 195, 625, 445), "kind": "shirt"},
-    "Обложка блокнота": {"box": (350, 115, 655, 590), "kind": "notebook"},
-    "Плакат": {"box": (230, 85, 750, 600), "kind": "poster"},
-    "Кружка: развертка": {"box": (205, 205, 775, 465), "kind": "mug_wrap"},
+PALETTES = {
+    "Красный, синий, снег": [(225, 28, 48), (28, 68, 154), (255, 255, 250), (24, 42, 55)],
+    "Полярная ночь": [(18, 31, 45), (47, 101, 128), (232, 247, 244), (205, 42, 68)],
+    "Морошка и лед": [(230, 83, 53), (249, 179, 69), (235, 247, 244), (30, 67, 89)],
+    "Черный знак": [(12, 14, 16), (248, 247, 241), (210, 219, 214), (168, 33, 49)],
 }
 
-SYMBOLS = [
-    "Фигура с посохом",
-    "Танцующая фигура",
-    "Треугольная фигура",
-    "Чум",
-    "Лодка",
-    "Знак солнца",
-    "Олень",
-    "След",
-]
+MOTIFS = ["Ромб", "Чум", "Солнце", "Лодка", "След", "Фигура"]
 
 
 st.markdown(
@@ -35,166 +27,187 @@ st.markdown(
     <style>
     .stApp {
         background:
-            radial-gradient(circle at 15% 8%, rgba(219, 35, 52, .08), transparent 27%),
-            linear-gradient(135deg, #f8f3ea 0%, #eef5f3 48%, #fbfaf5 100%);
+            radial-gradient(circle at 12% 8%, rgba(229, 40, 63, .15), transparent 22%),
+            radial-gradient(circle at 86% 4%, rgba(39, 119, 145, .16), transparent 24%),
+            linear-gradient(135deg, #f7f2e8 0%, #edf4f2 48%, #fffaf1 100%);
     }
-    .block-container { padding-top: 2rem; max-width: 1220px; }
-    h1 { color: #203945; font-size: 3.35rem !important; line-height: 1 !important; }
-    h2, h3 { color: #203945; }
+    .block-container { max-width: 1320px; padding-top: 1.3rem; }
+    h1 {
+        color: #172b35;
+        font-size: 4.2rem !important;
+        line-height: .95 !important;
+        letter-spacing: 0 !important;
+        margin-bottom: .2rem !important;
+    }
+    h2, h3 { color: #172b35; letter-spacing: 0 !important; }
     [data-testid="stSidebar"] {
-        background: #f5f0e8;
-        border-right: 1px solid rgba(56, 73, 81, .12);
+        background: #f4efe4;
+        border-right: 1px solid rgba(23, 43, 53, .12);
     }
     div[data-testid="stImage"] img {
-        border-radius: 18px;
-        box-shadow: 0 18px 45px rgba(40, 48, 52, .12);
+        border-radius: 20px;
+        box-shadow: 0 22px 60px rgba(24, 36, 42, .16);
     }
-    .note { color: #66737a; font-size: .92rem; }
+    .hero {
+        padding: 24px 0 10px 0;
+        border-bottom: 1px solid rgba(23, 43, 53, .12);
+        margin-bottom: 22px;
+    }
+    .lead {
+        max-width: 850px;
+        color: #52646c;
+        font-size: 1.05rem;
+        line-height: 1.55;
+    }
+    .chip {
+        display: inline-block;
+        padding: 7px 11px;
+        margin: 0 7px 7px 0;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, .62);
+        border: 1px solid rgba(23, 43, 53, .12);
+        color: #33464f;
+        font-size: .92rem;
+    }
+    .metric {
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, .68);
+        border: 1px solid rgba(23, 43, 53, .1);
+        border-radius: 16px;
+    }
+    .small { color: #66757c; font-size: .92rem; line-height: 1.45; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
-def image_to_png_bytes(image: Image.Image) -> bytes:
+def png_bytes(image: Image.Image) -> bytes:
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
 
 
-def textured_background(size: tuple[int, int] = CANVAS_SIZE) -> Image.Image:
+def rgba(color: tuple[int, int, int], alpha: int = 255) -> tuple[int, int, int, int]:
+    return color[0], color[1], color[2], alpha
+
+
+def paper_texture(size: tuple[int, int], base=(248, 246, 236)) -> Image.Image:
     width, height = size
-    y = np.linspace(0, 1, height)[:, None]
-    x = np.linspace(0, 1, width)[None, :]
-    base = np.zeros((height, width, 3), dtype=np.uint8)
-    base[..., 0] = (244 - 12 * y + 5 * x).astype(np.uint8)
-    base[..., 1] = (242 - 7 * y + 6 * x).astype(np.uint8)
-    base[..., 2] = (234 - 8 * y + 10 * x).astype(np.uint8)
-    noise = np.random.default_rng(11).normal(0, 1.5, base.shape).astype(np.int16)
-    return Image.fromarray(np.clip(base.astype(np.int16) + noise, 0, 255).astype(np.uint8)).convert("RGBA")
+    yy = np.linspace(0, 1, height)[:, None]
+    xx = np.linspace(0, 1, width)[None, :]
+    arr = np.zeros((height, width, 3), dtype=np.float32)
+    arr[..., 0] = base[0] - 10 * yy + 4 * xx
+    arr[..., 1] = base[1] - 8 * yy + 5 * xx
+    arr[..., 2] = base[2] - 7 * yy + 8 * xx
+    noise = np.random.default_rng(42).normal(0, 2.1, arr.shape)
+    return Image.fromarray(np.clip(arr + noise, 0, 255).astype(np.uint8)).convert("RGBA")
 
 
-def shadow(size: tuple[int, int], box: tuple[int, int, int, int], radius: int = 30) -> Image.Image:
-    layer = Image.new("RGBA", size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(layer)
-    draw.rounded_rectangle(box, radius=radius, fill=(23, 34, 38, 58))
-    return layer.filter(ImageFilter.GaussianBlur(24))
-
-
-def pixel_rect(draw: ImageDraw.ImageDraw, x: int, y: int, cells: list[tuple[int, int]], color, s: int) -> None:
-    for cx, cy in cells:
-        draw.rectangle((x + cx * s, y + cy * s, x + (cx + 1) * s - 1, y + (cy + 1) * s - 1), fill=color)
-
-
-def make_strip_ornament(width: int = 900, height: int = 560) -> Image.Image:
-    image = Image.new("RGBA", (width, height), (255, 255, 255, 255))
-    draw = ImageDraw.Draw(image)
-    red = (232, 28, 48, 255)
-    blue = (29, 67, 154, 255)
-    s = 8
-
-    def band(y: int, motif_width: int, color, cells: list[tuple[int, int]]) -> None:
-        for x in range(-motif_width, width + motif_width, motif_width):
-            pixel_rect(draw, x, y, cells, color, s)
-
-    band(18, 88, blue, [(0, 2), (1, 2), (2, 2), (3, 2), (1, 1), (2, 0), (3, 1), (6, 2), (7, 2), (8, 2), (9, 2), (7, 1), (8, 0), (9, 1)])
-    draw.rectangle((0, 53, width, 58), fill=blue)
-    band(76, 190, red, [(5, 1), (6, 2), (7, 3), (6, 4), (5, 5), (4, 6), (3, 7), (8, 6), (9, 7), (6, 5), (6, 6), (6, 7), (5, 8), (7, 8), (4, 9), (8, 9), (14, 1), (15, 1), (16, 1), (15, 2), (15, 3), (14, 4), (16, 4), (13, 5), (17, 5), (12, 6), (18, 6), (11, 7), (19, 7), (12, 8), (18, 8), (13, 9), (17, 9), (14, 10), (16, 10)])
-    draw.rectangle((0, 154, width, 160), fill=blue)
-    band(176, 74, blue, [(0, 0), (1, 0), (2, 0), (2, 1), (3, 2), (4, 3), (5, 2), (6, 1), (6, 0), (7, 0), (8, 0)])
-    band(240, 76, red, [(0, 8), (1, 7), (2, 6), (3, 5), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (1, 8), (2, 8), (6, 8), (7, 8)])
-    draw.rectangle((0, 312, width, 318), fill=blue)
-    band(336, 40, blue, [(1, 0), (1, 1), (1, 2), (0, 1), (2, 1)])
-    band(386, 210, red, [(0, 4), (1, 3), (2, 2), (3, 1), (4, 2), (5, 3), (6, 4), (12, 1), (12, 2), (12, 3), (11, 4), (10, 5), (11, 6), (12, 6), (13, 6), (14, 5), (13, 4), (19, 4), (20, 3), (21, 2), (22, 1), (23, 2), (24, 3), (25, 4)])
-    draw.rectangle((0, 468, width, 474), fill=blue)
-    band(495, 70, blue, [(0, 0), (1, 1), (2, 2), (3, 2), (4, 1), (5, 0), (2, 3), (3, 3)])
-    return image
-
-
-def draw_symbol(name: str, size: int = 260) -> Image.Image:
-    image = Image.new("RGBA", (size, size), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(image)
-    black = (15, 16, 14, 255)
-    w = max(5, size // 32)
-    c = size // 2
-
-    if name == "Фигура с посохом":
-        draw.ellipse((c - 22, 28, c + 22, 72), fill=black)
-        draw.line((c, 72, c, 155), fill=black, width=w + 2)
-        draw.line((c, 96, c - 62, 122), fill=black, width=w)
-        draw.line((c, 96, c + 54, 125), fill=black, width=w)
-        draw.line((c, 155, c - 44, 220), fill=black, width=w)
-        draw.line((c, 155, c + 46, 220), fill=black, width=w)
-        draw.line((215, 35, 238, 225), fill=black, width=max(3, w - 2))
-        draw.line((42, 224, 215, 224), fill=black, width=w)
-    elif name == "Танцующая фигура":
-        draw.ellipse((c - 20, 24, c + 20, 64), fill=black)
-        draw.polygon((c, 64, c - 42, 170, c + 42, 170), fill=black)
-        draw.line((c - 22, 88, c - 82, 70), fill=black, width=w)
-        draw.line((c + 22, 88, c + 82, 70), fill=black, width=w)
-        draw.line((c - 16, 170, c - 38, 224), fill=black, width=w)
-        draw.line((c + 16, 170, c + 44, 224), fill=black, width=w)
-    elif name == "Треугольная фигура":
-        draw.ellipse((c - 15, 28, c + 15, 58), outline=black, width=w)
-        draw.polygon((c, 70, c - 54, 205, c + 54, 205), outline=black)
-        draw.line((c - 54, 205, c + 54, 205), fill=black, width=w)
-        draw.line((c - 82, 95, c - 38, 128), fill=black, width=w)
-        draw.line((c + 40, 128, c + 78, 96), fill=black, width=w)
-        draw.line((c - 28, 140, c + 28, 140), fill=black, width=w)
-    elif name == "Чум":
-        draw.polygon((c, 45, c - 76, 205, c + 76, 205), outline=black)
-        draw.line((c, 45, c, 205), fill=black, width=w)
-        draw.line((c - 52, 150, c + 52, 150), fill=black, width=w)
-        draw.arc((c - 46, 120, c + 46, 214), 200, 340, fill=black, width=w)
-        draw.line((45, 222, 215, 222), fill=black, width=w)
-    elif name == "Лодка":
-        draw.arc((42, 124, 220, 230), 12, 168, fill=black, width=w + 3)
-        draw.line((58, 172, 210, 172), fill=black, width=w)
-        draw.line((c, 55, c, 172), fill=black, width=w)
-        draw.line((c, 82, c - 52, 132), fill=black, width=w)
-        draw.line((c, 82, c + 44, 132), fill=black, width=w)
-        draw.line((72, 214, 210, 214), fill=black, width=w)
-    elif name == "Знак солнца":
-        draw.line((c, 32, c, 222), fill=black, width=w)
-        draw.line((55, 125, 205, 125), fill=black, width=w)
-        draw.line((80, 62, 180, 188), fill=black, width=w)
-        draw.line((180, 62, 80, 188), fill=black, width=w)
-        draw.polygon((c, 52, c - 26, 116, c + 26, 116), outline=black)
-    elif name == "Олень":
-        draw.line((65, 152, 168, 152), fill=black, width=w + 2)
-        draw.line((168, 152, 205, 112), fill=black, width=w)
-        draw.line((94, 152, 74, 210), fill=black, width=w)
-        draw.line((140, 152, 154, 210), fill=black, width=w)
-        draw.line((200, 112, 230, 92), fill=black, width=w)
-        draw.line((205, 112, 232, 132), fill=black, width=w)
-        draw.line((220, 92, 230, 62), fill=black, width=max(3, w - 1))
+def draw_motif(draw: ImageDraw.ImageDraw, kind: str, cx: int, cy: int, cell: int, color) -> None:
+    w = max(3, cell // 12)
+    r = cell // 2 - 5
+    if kind == "Ромб":
+        draw.polygon([(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)], outline=color, width=w)
+        draw.polygon([(cx, cy - r // 2), (cx + r // 2, cy), (cx, cy + r // 2), (cx - r // 2, cy)], fill=color)
+    elif kind == "Чум":
+        draw.polygon([(cx, cy - r), (cx - r, cy + r), (cx + r, cy + r)], outline=color, width=w)
+        draw.line((cx, cy - r, cx, cy + r), fill=color, width=w)
+        draw.arc((cx - r // 2, cy, cx + r // 2, cy + r + 8), 205, 335, fill=color, width=w)
+    elif kind == "Солнце":
+        draw.ellipse((cx - r // 2, cy - r // 2, cx + r // 2, cy + r // 2), outline=color, width=w)
+        for i in range(8):
+            a = i * pi / 4
+            draw.line((cx + cos(a) * r * .62, cy + sin(a) * r * .62, cx + cos(a) * r, cy + sin(a) * r), fill=color, width=w)
+    elif kind == "Лодка":
+        draw.arc((cx - r, cy - r // 4, cx + r, cy + r), 15, 165, fill=color, width=w + 1)
+        draw.line((cx, cy - r, cx, cy + r // 3), fill=color, width=w)
+        draw.line((cx, cy - r // 2, cx - r // 2, cy), fill=color, width=w)
+        draw.line((cx, cy - r // 2, cx + r // 2, cy), fill=color, width=w)
+    elif kind == "След":
+        draw.line((cx - r, cy + r, cx + r, cy + r), fill=color, width=w)
+        draw.line((cx, cy - r, cx, cy + r), fill=color, width=w)
+        draw.line((cx, cy - r, cx - r // 2, cy - r // 3), fill=color, width=w)
+        draw.line((cx, cy - r, cx + r // 2, cy - r // 3), fill=color, width=w)
     else:
-        draw.line((42, 210, 218, 210), fill=black, width=w)
-        draw.line((c, 50, c, 210), fill=black, width=w)
-        draw.line((c, 50, c - 35, 92), fill=black, width=w)
-        draw.line((c, 50, c + 36, 92), fill=black, width=w)
-        draw.line((c - 34, 138, c + 34, 138), fill=black, width=w)
-    return image.filter(ImageFilter.GaussianBlur(0.35))
+        draw.ellipse((cx - r // 3, cy - r, cx + r // 3, cy - r // 3), fill=color)
+        draw.line((cx, cy - r // 3, cx, cy + r // 2), fill=color, width=w)
+        draw.line((cx - r, cy, cx + r, cy), fill=color, width=w)
+        draw.line((cx, cy + r // 2, cx - r // 2, cy + r), fill=color, width=w)
+        draw.line((cx, cy + r // 2, cx + r // 2, cy + r), fill=color, width=w)
 
 
-def open_uploaded_or_fallback(uploaded_file, fallback: Image.Image) -> Image.Image:
-    if uploaded_file is None:
-        return fallback
-    return Image.open(uploaded_file).convert("RGBA")
+def generate_ornament(seed: int, palette_name: str, style: str, density: int, symmetry: bool, accent: str, size: int = 920) -> Image.Image:
+    rng = np.random.default_rng(seed)
+    palette = PALETTES[palette_name]
+    bg = palette[2]
+    primary = palette[0]
+    secondary = palette[1]
+    dark = palette[3]
+    image = paper_texture((size, size), bg).convert("RGBA")
+    layer = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    cell = max(54, size // density)
+    rows = size // cell + 2
+    cols = size // cell + 2
+
+    if style == "Пиксельная вышивка":
+        pixel = max(8, cell // 8)
+        for y in range(rows):
+            for x in range(cols):
+                cx = x * cell + cell // 2
+                cy = y * cell + cell // 2
+                color = rgba(primary if (x + y + seed) % 2 == 0 else secondary)
+                for step in range(-3, 4):
+                    draw.rectangle((cx + step * pixel, cy + abs(step) * pixel, cx + (step + 1) * pixel - 2, cy + (abs(step) + 1) * pixel - 2), fill=color)
+                    draw.rectangle((cx + step * pixel, cy - abs(step) * pixel, cx + (step + 1) * pixel - 2, cy - (abs(step) - 1) * pixel - 2), fill=color)
+                if rng.random() > .58:
+                    draw.rectangle((cx - pixel, cy - pixel, cx + pixel, cy + pixel), fill=rgba(dark))
+    elif style == "Петроглифы":
+        for y in range(rows):
+            for x in range(cols):
+                if rng.random() < .18:
+                    continue
+                kind = rng.choice(MOTIFS if accent == "Микс" else [accent])
+                jitter_x = int(rng.integers(-cell // 7, cell // 7))
+                jitter_y = int(rng.integers(-cell // 7, cell // 7))
+                color = rgba(dark if rng.random() > .25 else primary)
+                draw_motif(draw, kind, x * cell + cell // 2 + jitter_x, y * cell + cell // 2 + jitter_y, cell, color)
+    else:
+        for y in range(rows):
+            for x in range(cols):
+                cx = x * cell + cell // 2
+                cy = y * cell + cell // 2
+                color = rgba(primary if x % 2 == 0 else secondary)
+                draw.polygon([(cx, cy - cell // 2), (cx + cell // 2, cy), (cx, cy + cell // 2), (cx - cell // 2, cy)], outline=color, width=max(4, cell // 12))
+                draw.line((cx - cell // 2, cy, cx + cell // 2, cy), fill=rgba(dark, 160), width=max(3, cell // 18))
+                draw.line((cx, cy - cell // 2, cx, cy + cell // 2), fill=rgba(dark, 160), width=max(3, cell // 18))
+
+    if symmetry:
+        mirror = layer.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        layer = Image.blend(layer, mirror, .35)
+
+    image.alpha_composite(layer)
+    return image.filter(ImageFilter.UnsharpMask(radius=1.2, percent=115, threshold=2))
 
 
-def fit_to_square(image: Image.Image, size: int = 480) -> Image.Image:
-    image = image.convert("RGBA")
-    image.thumbnail((size, size), Image.LANCZOS)
-    canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0))
-    canvas.alpha_composite(image, ((size - image.width) // 2, (size - image.height) // 2))
-    return canvas
+def make_ribbon(pattern: Image.Image, palette_name: str) -> Image.Image:
+    palette = PALETTES[palette_name]
+    ribbon = Image.new("RGBA", (1180, 260), rgba(palette[2]))
+    draw = ImageDraw.Draw(ribbon)
+    crop = pattern.resize((260, 260), Image.LANCZOS)
+    for x in range(0, 1180, 260):
+        tile = crop if (x // 260) % 2 == 0 else crop.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        ribbon.alpha_composite(tile, (x, 0))
+    draw.rectangle((0, 0, 1180, 12), fill=rgba(palette[1]))
+    draw.rectangle((0, 248, 1180, 260), fill=rgba(palette[0]))
+    return ribbon
 
 
-def find_palette(image: Image.Image, color_count: int) -> list[tuple[int, int, int]]:
-    rgb = image.convert("RGB").resize((150, 150))
-    pixels = np.array(rgb).reshape(-1, 3)
-    model = KMeans(n_clusters=color_count, n_init=10, random_state=42)
+def find_palette(image: Image.Image, count: int = 5) -> list[tuple[int, int, int]]:
+    sample = image.convert("RGB").resize((160, 160))
+    pixels = np.array(sample).reshape(-1, 3)
+    model = KMeans(n_clusters=count, n_init=10, random_state=8)
     model.fit(pixels)
     centers = model.cluster_centers_.astype(int)
     labels, counts = np.unique(model.labels_, return_counts=True)
@@ -202,237 +215,197 @@ def find_palette(image: Image.Image, color_count: int) -> list[tuple[int, int, i
     return [tuple(centers[label]) for label in order]
 
 
-def edge_map(image: Image.Image, strength: int) -> Image.Image:
+def edge_preview(image: Image.Image) -> Image.Image:
     gray = image.convert("L").filter(ImageFilter.FIND_EDGES)
-    gray = ImageEnhance.Contrast(gray).enhance(1 + strength / 18)
-    alpha = gray.point(lambda value: 210 if value > 32 else 0)
-    edges = Image.new("RGBA", image.size, (20, 45, 54, 0))
-    edges.putalpha(alpha)
-    return edges
+    gray = ImageEnhance.Contrast(gray).enhance(2.2)
+    result = Image.new("RGBA", image.size, (18, 35, 44, 0))
+    result.putalpha(gray.point(lambda value: 230 if value > 28 else 0))
+    return Image.alpha_composite(image.convert("RGBA"), result)
 
 
-def recolor_image(image: Image.Image, palette: list[tuple[int, int, int]], opacity: int) -> Image.Image:
-    rgb = image.convert("RGB")
-    arr = np.array(rgb)
-    gray = np.mean(arr, axis=2)
-    levels = np.linspace(0, 256, len(palette) + 1)
-    result = np.zeros_like(arr)
-
-    for index, color in enumerate(palette):
-        mask = (gray >= levels[index]) & (gray < levels[index + 1])
-        result[mask] = color
-
-    recolored = Image.fromarray(result.astype("uint8")).convert("RGBA")
-    source_alpha = np.array(image.getchannel("A"), dtype=np.float32)
-    alpha = (source_alpha * (opacity / 100)).clip(0, 255).astype("uint8")
-    recolored.putalpha(Image.fromarray(alpha))
-    return recolored
-
-
-def make_pattern_tile(image: Image.Image, repeats: int, mirror: bool) -> Image.Image:
-    tile_size = 220
-    tile = image.resize((tile_size, tile_size), Image.LANCZOS)
-    pattern = Image.new("RGBA", (tile_size * repeats, tile_size * repeats), (255, 255, 255, 0))
-    for y in range(repeats):
-        for x in range(repeats):
-            current = tile
-            if mirror and (x + y) % 2 == 1:
-                current = current.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            pattern.alpha_composite(current, (x * tile_size, y * tile_size))
-    return pattern
-
-
-def make_symbol_pattern(symbol: Image.Image, repeats: int, opacity: int) -> Image.Image:
-    tile_size = 190
-    symbol = symbol.resize((tile_size, tile_size), Image.LANCZOS)
-    alpha = np.array(symbol.getchannel("A"), dtype=np.float32)
-    symbol.putalpha(Image.fromarray((alpha * (opacity / 100)).clip(0, 255).astype("uint8")))
-    pattern = Image.new("RGBA", (tile_size * repeats, tile_size * repeats), (255, 255, 255, 0))
-    for y in range(repeats):
-        for x in range(repeats):
-            pattern.alpha_composite(symbol, (x * tile_size, y * tile_size))
-    return pattern
-
-
-def draw_template(name: str) -> Image.Image:
-    template = TEMPLATES[name]
-    kind = template["kind"]
-    box = template["box"]
-    image = textured_background()
+def showroom_scene() -> Image.Image:
+    image = paper_texture(CANVAS, (234, 238, 234))
     draw = ImageDraw.Draw(image)
-    image.alpha_composite(shadow(CANVAS_SIZE, box, 26))
-
-    if kind == "bag":
-        product = (250, 110, 730, 625)
-        image.alpha_composite(shadow(CANVAS_SIZE, product, 34))
-        draw.rounded_rectangle(product, radius=34, fill=(239, 232, 214), outline=(186, 174, 150), width=5)
-        draw.arc((365, 25, 615, 250), 180, 360, fill=(126, 104, 76), width=15)
-        draw.line((365, 120, 365, 180), fill=(126, 104, 76), width=15)
-        draw.line((615, 120, 615, 180), fill=(126, 104, 76), width=15)
-    elif kind == "shirt":
-        shape = (285, 120, 400, 80, 490, 155, 580, 80, 695, 120, 765, 270, 685, 320, 670, 620, 310, 620, 295, 320, 215, 270)
-        image.alpha_composite(shadow(CANVAS_SIZE, (215, 80, 765, 625), 45))
-        draw.polygon(shape, fill=(246, 246, 239), outline=(176, 178, 168))
-        draw.arc((430, 105, 550, 215), 0, 180, fill=(176, 178, 168), width=6)
-    elif kind == "notebook":
-        product = (320, 80, 685, 625)
-        image.alpha_composite(shadow(CANVAS_SIZE, product, 22))
-        draw.rounded_rectangle(product, radius=22, fill=(248, 246, 238), outline=(194, 184, 166), width=5)
-        draw.rectangle((340, 80, 358, 625), fill=(220, 188, 96))
-        for y in range(125, 590, 48):
-            draw.ellipse((304, y, 334, y + 30), fill=(38, 47, 52))
-    elif kind == "mug_wrap":
-        product = (170, 170, 810, 500)
-        image.alpha_composite(shadow(CANVAS_SIZE, product, 30))
-        draw.rounded_rectangle(product, radius=30, fill=(250, 250, 245), outline=(178, 185, 184), width=5)
-        draw.text((210, 505), "Развертка для печати на кружке", fill=(96, 105, 108))
-    else:
-        product = (190, 65, 790, 625)
-        image.alpha_composite(shadow(CANVAS_SIZE, product, 18))
-        draw.rectangle(product, fill=(250, 248, 240), outline=(112, 96, 75), width=12)
-        draw.rectangle((216, 92, 764, 598), outline=(196, 188, 170), width=4)
-
-    draw.rounded_rectangle(box, radius=16, outline=(32, 57, 69, 115), width=3)
-    return image
+    draw.rectangle((0, 520, CANVAS[0], CANVAS[1]), fill=(218, 213, 201, 255))
+    draw.polygon([(150, 620), (1065, 620), (1205, 790), (20, 790)], fill=(197, 190, 175, 255))
+    draw.rounded_rectangle((260, 110, 1040, 705), radius=34, fill=(242, 240, 232, 255), outline=(170, 168, 158, 255), width=4)
+    draw.rounded_rectangle((315, 155, 985, 660), radius=20, fill=(250, 248, 239, 255), outline=(206, 201, 188, 255), width=4)
+    draw.polygon(SURFACE_QUAD, fill=(255, 254, 246, 255), outline=(155, 154, 147, 255))
+    draw.rounded_rectangle((65, 290, 310, 710), radius=30, fill=(235, 224, 203, 255), outline=(155, 130, 98, 255), width=5)
+    draw.arc((112, 170, 262, 395), 180, 360, fill=(126, 96, 65, 255), width=12)
+    draw.rounded_rectangle((1040, 330, 1205, 610), radius=26, fill=(249, 249, 244, 255), outline=(160, 170, 170, 255), width=5)
+    draw.arc((1142, 395, 1265, 545), 270, 90, fill=(160, 170, 170, 255), width=14)
+    return image.filter(ImageFilter.UnsharpMask(radius=1.0, percent=105, threshold=3))
 
 
-def fit_custom_mockup(image: Image.Image) -> Image.Image:
-    image = image.convert("RGBA")
-    image.thumbnail(CANVAS_SIZE, Image.LANCZOS)
-    canvas = textured_background()
-    canvas.alpha_composite(image, ((CANVAS_SIZE[0] - image.width) // 2, (CANVAS_SIZE[1] - image.height) // 2))
-    return canvas
+def transform_to_quad(pattern: Image.Image, quad: tuple[tuple[int, int], ...], size: tuple[int, int]) -> Image.Image:
+    texture = pattern.resize((640, 640), Image.LANCZOS)
+    alpha = np.array(texture.getchannel("A"), dtype=np.float32)
+    texture.putalpha(Image.fromarray((alpha * .92).clip(0, 255).astype(np.uint8)))
+    source = [(0, 0), (texture.width, 0), (texture.width, texture.height), (0, texture.height)]
+    matrix = []
+    vector = []
+    for (x, y), (u, v) in zip(quad, source):
+        matrix.append([x, y, 1, 0, 0, 0, -u * x, -u * y])
+        matrix.append([0, 0, 0, x, y, 1, -v * x, -v * y])
+        vector.extend([u, v])
+    coeffs = np.linalg.solve(np.array(matrix, dtype=float), np.array(vector, dtype=float))
+    return texture.transform(size, Image.Transform.PERSPECTIVE, coeffs, Image.Resampling.BICUBIC)
 
 
-def place_pattern_on_mockup(mockup: Image.Image, pattern: Image.Image, box: tuple[int, int, int, int], opacity: int) -> Image.Image:
-    left, top, right, bottom = box
-    fitted = pattern.resize((right - left, bottom - top), Image.LANCZOS)
-    alpha = np.array(fitted.getchannel("A"), dtype=np.float32)
-    fitted.putalpha(Image.fromarray((alpha * (opacity / 100)).clip(0, 255).astype("uint8")))
-    result = mockup.copy()
-    result.alpha_composite(fitted, (left, top))
-    overlay = Image.new("RGBA", result.size, (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
-    draw.rounded_rectangle((left, top, right, bottom), radius=16, outline=(255, 255, 255, 95), width=2)
-    result.alpha_composite(overlay)
+def ar_overlay(base: Image.Image, pattern: Image.Image, quad: tuple[tuple[int, int], ...], tint: int) -> Image.Image:
+    base = base.convert("RGBA")
+    base.thumbnail(CANVAS, Image.LANCZOS)
+    canvas = Image.new("RGBA", CANVAS, (235, 234, 226, 255))
+    canvas.alpha_composite(base, ((CANVAS[0] - base.width) // 2, (CANVAS[1] - base.height) // 2))
+    overlay = transform_to_quad(pattern, quad, CANVAS)
+    if tint < 100:
+        alpha = np.array(overlay.getchannel("A"), dtype=np.float32)
+        overlay.putalpha(Image.fromarray((alpha * (tint / 100)).astype(np.uint8)))
+    result = Image.alpha_composite(canvas, overlay)
+    draw = ImageDraw.Draw(result)
+    draw.line([*quad, quad[0]], fill=(255, 255, 255, 170), width=3)
     return result
 
 
-st.title("OrnaMap")
-st.caption("Рабочие плоские макеты с точной областью печати")
+def generate_collection(pattern: Image.Image, ribbon: Image.Image) -> Image.Image:
+    image = showroom_scene()
+    image = ar_overlay(image, pattern, SURFACE_QUAD, 88)
+    bag_pattern = pattern.resize((175, 220), Image.LANCZOS)
+    mug_pattern = ribbon.resize((150, 66), Image.LANCZOS)
+    image.alpha_composite(bag_pattern, (98, 390))
+    image.alpha_composite(mug_pattern, (1055, 437))
+    return image
+
+
+def open_user_image(uploaded_file) -> Image.Image | None:
+    if uploaded_file is None:
+        return None
+    return Image.open(uploaded_file).convert("RGBA")
+
 
 with st.sidebar:
-    st.subheader("Орнамент")
-    ornament_type = st.radio("Тип узора", ["Полосной орнамент", "Отдельный рисунок", "Загрузить свой"])
-    selected_symbol = st.selectbox("Рисунок из второго изображения", SYMBOLS, disabled=ornament_type != "Отдельный рисунок")
-    uploaded_ornament = st.file_uploader("Загрузите свой орнамент", type=["png", "jpg", "jpeg", "webp"], disabled=ornament_type != "Загрузить свой")
+    st.subheader("Генератор")
+    palette_name = st.selectbox("Палитра", list(PALETTES.keys()))
+    style = st.radio("Стиль", ["Пиксельная вышивка", "Петроглифы", "Северная мозаика"])
+    accent = st.selectbox("Главный мотив", ["Микс", *MOTIFS], disabled=style != "Петроглифы")
+    seed = st.slider("Номер варианта", 1, 999, 124)
+    density = st.slider("Плотность узора", 5, 14, 9)
+    symmetry = st.toggle("Симметрия", value=True)
+    opacity = st.slider("Яркость AR-наложения", 35, 100, 88)
 
-    st.subheader("Макет")
-    mockup_mode = st.radio("Источник макета", ["Готовый плоский", "Загрузить свой"], horizontal=True)
-    template_name = st.selectbox("Готовый макет", list(TEMPLATES.keys()), disabled=mockup_mode != "Готовый плоский")
-    uploaded_mockup = st.file_uploader("Загрузите свой макет", type=["png", "jpg", "jpeg", "webp"], disabled=mockup_mode != "Загрузить свой")
+    st.subheader("AR-сцена")
+    scene_mode = st.radio("Фон", ["Демо-сцена", "Загрузить фото", "Камера"], horizontal=False)
+    uploaded_scene = st.file_uploader("Фото поверхности", type=["png", "jpg", "jpeg", "webp"], disabled=scene_mode != "Загрузить фото")
+    camera_scene = st.camera_input("Снимок с камеры", disabled=scene_mode != "Камера")
 
-    color_count = st.slider("Сколько основных цветов найти", 2, 6, 4)
-    repeats = st.slider("Повторы узора", 1, 8, 3 if ornament_type == "Отдельный рисунок" else 4)
-    pattern_opacity = st.slider("Прозрачность узора", 35, 100, 92)
-    edge_strength = st.slider("Сила выделения контура", 1, 12, 5)
-    mirror = st.toggle("Чередовать зеркальные плитки", value=True, disabled=ornament_type == "Отдельный рисунок")
-
-    custom_box = None
-    if mockup_mode == "Загрузить свой":
-        st.subheader("Область наложения")
-        x = st.slider("Смещение по горизонтали", 0, 760, 300)
-        y = st.slider("Смещение по вертикали", 0, 520, 180)
-        w = st.slider("Ширина области", 120, 720, 360)
-        h = st.slider("Высота области", 120, 500, 300)
-        custom_box = (x, y, min(CANVAS_SIZE[0], x + w), min(CANVAS_SIZE[1], y + h))
+    st.subheader("Плоскость")
+    top_shift = st.slider("Верхняя перспектива", -120, 120, 0)
+    side_shift = st.slider("Боковая перспектива", -120, 120, 0)
 
 
-strip = make_strip_ornament()
-symbol = draw_symbol(selected_symbol)
+st.markdown(
+    """
+    <div class="hero">
+      <h1>OrnaMap AR</h1>
+      <p class="lead">
+        Генератор северных орнаментов и примерка узора на поверхности в стиле дополненной реальности.
+        Проект показывает не просто готовую картинку, а понятный алгоритм: генерация мотива, анализ цветов,
+        построение повторяющегося паттерна и перспективное наложение на сцену.
+      </p>
+      <span class="chip">Streamlit</span>
+      <span class="chip">Pillow</span>
+      <span class="chip">KMeans</span>
+      <span class="chip">AR-перспектива</span>
+      <span class="chip">PNG экспорт</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-if ornament_type == "Полосной орнамент":
-    source = fit_to_square(strip)
-    palette = find_palette(source, color_count)
-    recolored = recolor_image(source, palette, 100)
-    tile = Image.alpha_composite(recolored, edge_map(source, edge_strength))
-    pattern = make_pattern_tile(tile, repeats, mirror)
-    source_caption = "Полосной орнамент"
-elif ornament_type == "Отдельный рисунок":
-    source = fit_to_square(symbol)
-    palette = find_palette(source, color_count)
-    pattern = make_symbol_pattern(symbol, repeats, 100)
-    source_caption = f"Отдельный рисунок: {selected_symbol}"
+pattern = generate_ornament(seed, palette_name, style, density, symmetry, accent)
+ribbon = make_ribbon(pattern, palette_name)
+palette = find_palette(pattern)
+
+quad = (
+    (SURFACE_QUAD[0][0] + side_shift, SURFACE_QUAD[0][1] + top_shift),
+    (SURFACE_QUAD[1][0] - side_shift, SURFACE_QUAD[1][1] - top_shift),
+    (SURFACE_QUAD[2][0] - side_shift, SURFACE_QUAD[2][1]),
+    (SURFACE_QUAD[3][0] + side_shift, SURFACE_QUAD[3][1]),
+)
+
+if scene_mode == "Загрузить фото":
+    source_scene = open_user_image(uploaded_scene) or showroom_scene()
+elif scene_mode == "Камера":
+    source_scene = open_user_image(camera_scene) or showroom_scene()
 else:
-    source = fit_to_square(open_uploaded_or_fallback(uploaded_ornament, strip))
-    palette = find_palette(source, color_count)
-    recolored = recolor_image(source, palette, 100)
-    tile = Image.alpha_composite(recolored, edge_map(source, edge_strength))
-    pattern = make_pattern_tile(tile, repeats, mirror)
-    source_caption = "Пользовательский орнамент"
+    source_scene = showroom_scene()
 
-if mockup_mode == "Загрузить свой":
-    mockup = fit_custom_mockup(open_uploaded_or_fallback(uploaded_mockup, draw_template("Плакат")))
-    box = custom_box or (300, 180, 660, 480)
-    result_caption = "Пользовательский макет"
-else:
-    mockup = draw_template(template_name)
-    box = TEMPLATES[template_name]["box"]
-    result_caption = f"Макет: {template_name}"
+ar_result = ar_overlay(source_scene, pattern, quad, opacity)
+collection = generate_collection(pattern, ribbon)
 
-result = place_pattern_on_mockup(mockup, pattern, box, pattern_opacity)
-
-left, right = st.columns([1, 1.25])
-with left:
-    st.subheader("Источник узора")
-    st.image(source, caption=source_caption, width="stretch")
+main_left, main_right = st.columns([.9, 1.35])
+with main_left:
+    st.subheader("Сгенерированный орнамент")
+    st.image(pattern, caption="Вариант узора", width="stretch")
+    st.image(ribbon, caption="Полосная версия для бордюра или ткани", width="stretch")
     swatches = "".join(
-        f"<span style='display:inline-block;width:54px;height:38px;background:rgb{color};"
-        "border-radius:10px;border:1px solid rgba(32,57,69,.18);margin-right:8px'></span>"
+        f"<span style='display:inline-block;width:56px;height:36px;border-radius:12px;margin-right:8px;"
+        f"background:rgb{color};border:1px solid rgba(23,43,53,.14)'></span>"
         for color in palette
     )
     st.markdown(swatches, unsafe_allow_html=True)
-    st.markdown("<p class='note'>В этой версии макет не имитирует фото, а показывает точную область печати. Так узор не съезжает и всегда читается.</p>", unsafe_allow_html=True)
 
-with right:
-    st.subheader("Примерка на макете")
-    st.image(result, caption=result_caption, width="stretch")
-    st.download_button("Скачать результат PNG", data=image_to_png_bytes(result), file_name="ornamap_result.png", mime="image/png")
+with main_right:
+    st.subheader("AR-примерка")
+    st.image(ar_result, caption="Перспективное наложение на плоскость", width="stretch")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.download_button("Скачать AR PNG", data=png_bytes(ar_result), file_name="ornamap_ar.png", mime="image/png")
+    with c2:
+        st.download_button("Скачать орнамент PNG", data=png_bytes(pattern), file_name="ornamap_pattern.png", mime="image/png")
 
 st.divider()
-st.subheader("Отдельные рисунки")
-cols = st.columns(4)
-for index, name in enumerate(SYMBOLS):
-    with cols[index % 4]:
-        st.image(draw_symbol(name), caption=name, width="stretch")
 
-tab1, tab2, tab3 = st.tabs(["Как работает", "Для защиты", "Что дальше"])
-with tab1:
-    st.markdown(
-        """
-        1. Пользователь выбирает полосной орнамент, отдельный знак или загружает свое изображение.
-        2. Программа строит повторяющийся паттерн.
-        3. Макет содержит точную область печати, поэтому узор накладывается ровно.
-        4. Результат можно скачать как PNG.
-        """
-    )
-with tab2:
-    st.markdown(
-        """
-        **Как объяснить:** я отказалась от случайных фото-мокапов, потому что на них сложно точно определить
-        место печати. Вместо этого приложение показывает плоский дизайн-макет, похожий на рабочий шаблон
-        для дизайнера.
+tab_gallery, tab_vision, tab_research = st.tabs(["Витрина", "Компьютерное зрение", "Для защиты"])
 
-        **Информатика:** изображение анализируется как массив пикселей, цвета группируются KMeans,
-        а итоговый макет собирается программно из слоев.
-        """
-    )
-with tab3:
+with tab_gallery:
+    st.image(collection, caption="Один орнамент сразу на нескольких носителях", width="stretch")
+
+with tab_vision:
+    v1, v2 = st.columns(2)
+    with v1:
+        st.image(edge_preview(pattern), caption="Выделение контуров", width="stretch")
+    with v2:
+        st.markdown(
+            """
+            <div class="metric"><b>Что делает программа</b><br>
+            <span class="small">1. Создает узор из простых геометрических мотивов.<br>
+            2. Повторяет его по сетке и добавляет симметрию.<br>
+            3. Находит основные цвета алгоритмом KMeans.<br>
+            4. Преобразует квадратный паттерн в четырехугольник, как при AR-наложении.</span></div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            """
+            <div class="metric"><b>Почему это выглядит как дополненная реальность</b><br>
+            <span class="small">Узор не просто вставляется прямоугольником. Он искажается по четырем точкам,
+            поэтому повторяет перспективу листа, стены, стола или другой поверхности на фото.</span></div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+with tab_research:
     st.markdown(
         """
-        - добавить автоматическое определение области печати на загруженном макете;
-        - сделать экспорт PDF для печати;
-        - сохранять библиотеку пользовательских знаков;
-        - добавить режим симметрии для полосных орнаментов.
+        **Короткая формулировка проекта:** я создала веб-приложение, которое генерирует северные орнаменты
+        и показывает, как они могут выглядеть на реальной поверхности через AR-примерку.
+
+        **Что можно показать жюри:** менять стиль, палитру, номер варианта, плотность узора, включать
+        симметрию, делать снимок с камеры и накладывать орнамент на выбранную плоскость.
+
+        **Где здесь информатика:** изображение хранится как массив пикселей, цвета анализируются методом
+        KMeans, контуры выделяются фильтром, а перспектива строится программным преобразованием изображения.
         """
     )
