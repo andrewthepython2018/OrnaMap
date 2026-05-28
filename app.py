@@ -1,6 +1,4 @@
 from io import BytesIO
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 import numpy as np
 import streamlit as st
@@ -8,12 +6,7 @@ from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from sklearn.cluster import KMeans
 
 
-st.set_page_config(
-    page_title="OrnaMap",
-    page_icon="OM",
-    layout="wide",
-)
-
+st.set_page_config(page_title="OrnaMap", page_icon="OM", layout="wide")
 
 CANVAS_SIZE = (980, 680)
 
@@ -25,23 +18,16 @@ MOCKUPS = {
     "Кружка": {"box": (355, 265, 625, 455), "color": (248, 249, 245), "accent": (178, 185, 184)},
 }
 
-ORNAMENTS = {
-    "Северные ромбы": "rhombs",
-    "Полярная звезда": "star",
-    "Лента тундры": "ribbon",
-    "Снежная сетка": "snow",
-    "Каменный берег": "shore",
-}
-
-ONLINE_ORNAMENTS = {
-    "Саамские костюмы, Ловозеро": "https://commons.wikimedia.org/wiki/Special:FilePath/S%C3%A1mi%20traditional%20costumes%2C%20Lovozero%2C%20Kola%20Peninsula%2C%20Russia.jpg?width=900",
-    "Саамская деталь одежды": "https://commons.wikimedia.org/wiki/Special:FilePath/Sami%2C%20colletto%20di%20giubba%20con%20pendenti%20in%20argento%2C%20xviii%20secolo.jpg?width=900",
-}
-
-ONLINE_MOCKUPS = {
-    "Фото шоппера": "https://commons.wikimedia.org/wiki/Special:FilePath/Tote%20Bag.jpeg?width=900",
-    "Фото белой кружки": "https://commons.wikimedia.org/wiki/Special:FilePath/Taza%20Blanca.jpg?width=900",
-}
+SYMBOLS = [
+    "Фигура с посохом",
+    "Танцующая фигура",
+    "Треугольная фигура",
+    "Чум",
+    "Лодка",
+    "Знак солнца",
+    "Олень",
+    "След",
+]
 
 
 st.markdown(
@@ -52,19 +38,9 @@ st.markdown(
             radial-gradient(circle at 12% 5%, rgba(190, 47, 54, 0.08), transparent 28%),
             linear-gradient(135deg, #f7f2e8 0%, #edf3f2 48%, #f9f7f0 100%);
     }
-    .block-container {
-        padding-top: 2.2rem;
-        padding-bottom: 3rem;
-        max-width: 1220px;
-    }
-    h1 {
-        font-size: 3.4rem !important;
-        line-height: 1 !important;
-        color: #203945;
-    }
-    h2, h3 {
-        color: #203945;
-    }
+    .block-container { padding-top: 2.1rem; max-width: 1220px; }
+    h1 { font-size: 3.4rem !important; line-height: 1 !important; color: #203945; }
+    h2, h3 { color: #203945; }
     [data-testid="stSidebar"] {
         background: #f4f0e8;
         border-right: 1px solid rgba(56, 73, 81, 0.12);
@@ -73,11 +49,7 @@ st.markdown(
         border-radius: 18px;
         box-shadow: 0 18px 45px rgba(40, 48, 52, 0.12);
     }
-    .source-note {
-        color: #637077;
-        font-size: 0.92rem;
-        margin-top: -0.35rem;
-    }
+    .source-note { color: #637077; font-size: 0.92rem; margin-top: -0.35rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -103,93 +75,133 @@ def shadow_layer(size: tuple[int, int], box: tuple[int, int, int, int], radius: 
     return shadow.filter(ImageFilter.GaussianBlur(22))
 
 
-def make_ornament(name: str, size: int = 480) -> Image.Image:
-    kind = ORNAMENTS[name]
-    image = Image.new("RGBA", (size, size), (246, 241, 230, 255))
+def pixel_rect(draw: ImageDraw.ImageDraw, x: int, y: int, cells: list[tuple[int, int]], color: tuple[int, int, int, int], s: int) -> None:
+    for cx, cy in cells:
+        draw.rectangle((x + cx * s, y + cy * s, x + (cx + 1) * s - 1, y + (cy + 1) * s - 1), fill=color)
+
+
+def make_strip_ornament(width: int = 900, height: int = 560) -> Image.Image:
+    image = Image.new("RGBA", (width, height), (255, 255, 255, 255))
     draw = ImageDraw.Draw(image)
-    navy = (26, 66, 82, 255)
-    red = (172, 43, 50, 255)
-    gold = (229, 178, 75, 255)
-    ice = (218, 229, 224, 255)
+    red = (232, 28, 48, 255)
+    blue = (29, 67, 154, 255)
+    s = 8
 
-    if kind == "star":
-        step = size // 6
-        colors = [navy, red, gold]
-        for row in range(6):
-            for col in range(6):
-                x = col * step + step // 2
-                y = row * step + step // 2
-                r = step // 3
-                color = colors[(row * 2 + col) % 3]
-                draw.polygon([(x, y - r), (x + r, y), (x, y + r), (x - r, y)], fill=color)
-                draw.line((x - r, y, x + r, y), fill=(246, 241, 230, 255), width=5)
-                draw.line((x, y - r, x, y + r), fill=(246, 241, 230, 255), width=5)
+    def repeat_band(y: int, motif_width: int, color: tuple[int, int, int, int], cells: list[tuple[int, int]]) -> None:
+        for x in range(-motif_width, width + motif_width, motif_width):
+            pixel_rect(draw, x, y, cells, color, s)
 
-    elif kind == "ribbon":
-        band = size // 8
-        colors = [navy, red, gold, ice]
-        for y in range(0, size, band):
-            draw.rectangle((0, y, size, y + band), fill=colors[(y // band) % len(colors)])
-            for x in range(-band, size + band, band):
-                draw.line(
-                    [(x, y + band), (x + band // 2, y + band // 4), (x + band, y + band)],
-                    fill=(246, 241, 230, 255),
-                    width=7,
-                    joint="curve",
-                )
+    blue_top = [(0, 2), (1, 2), (2, 2), (3, 2), (1, 1), (2, 0), (3, 1), (6, 2), (7, 2), (8, 2), (9, 2), (7, 1), (8, 0), (9, 1)]
+    repeat_band(18, 88, blue, blue_top)
+    draw.rectangle((0, 53, width, 58), fill=blue)
 
-    elif kind == "snow":
-        step = size // 9
-        for offset in range(-size, size * 2, step):
-            draw.line((offset, 0, offset + size, size), fill=navy, width=5)
-            draw.line((offset + size, 0, offset, size), fill=ice, width=5)
-        for row in range(1, 9, 2):
-            for col in range(1, 9, 2):
-                x = col * step
-                y = row * step
-                draw.ellipse((x - 11, y - 11, x + 11, y + 11), fill=red)
+    red_people = [
+        (5, 1), (6, 2), (7, 3), (6, 4), (5, 5), (4, 6), (3, 7), (8, 6), (9, 7),
+        (6, 5), (6, 6), (6, 7), (5, 8), (7, 8), (4, 9), (8, 9),
+        (14, 1), (15, 1), (16, 1), (15, 2), (15, 3), (14, 4), (16, 4),
+        (13, 5), (17, 5), (12, 6), (18, 6), (11, 7), (19, 7), (12, 8), (18, 8), (13, 9), (17, 9), (14, 10), (16, 10),
+    ]
+    repeat_band(76, 190, red, red_people)
+    draw.rectangle((0, 154, width, 160), fill=blue)
 
-    elif kind == "shore":
-        colors = [navy, (58, 105, 106, 255), red, gold, ice]
-        step = size // 10
-        for y in range(0, size, step):
-            color = colors[(y // step) % len(colors)]
-            draw.rectangle((0, y, size, y + step), fill=color)
-            for x in range(0, size, step):
-                if (x // step + y // step) % 2 == 0:
-                    draw.polygon([(x, y), (x + step, y), (x + step // 2, y + step)], fill=(246, 241, 230, 90))
+    blue_branch = [(0, 0), (1, 0), (2, 0), (2, 1), (3, 2), (4, 3), (5, 2), (6, 1), (6, 0), (7, 0), (8, 0)]
+    repeat_band(176, 74, blue, blue_branch)
 
-    else:
-        step = size // 7
-        colors = [navy, red, gold]
-        for row in range(7):
-            for col in range(7):
-                x = col * step + step // 2
-                y = row * step + step // 2
-                r = step // 3
-                draw.polygon([(x, y - r), (x + r, y), (x, y + r), (x - r, y)], fill=colors[(row + col) % 3])
-                if (row + col) % 2 == 0:
-                    draw.line((x - r, y, x + r, y), fill=(246, 241, 230, 255), width=5)
-        for offset in range(0, size, step):
-            draw.line((0, offset, size, offset), fill=(26, 66, 82, 60), width=2)
-            draw.line((offset, 0, offset, size), fill=(26, 66, 82, 60), width=2)
+    red_mountains = [(0, 8), (1, 7), (2, 6), (3, 5), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (1, 8), (2, 8), (6, 8), (7, 8)]
+    repeat_band(240, 76, red, red_mountains)
+    draw.rectangle((0, 312, width, 318), fill=blue)
+
+    blue_crosses = [(1, 0), (1, 1), (1, 2), (0, 1), (2, 1)]
+    repeat_band(336, 40, blue, blue_crosses)
+
+    red_birds = [
+        (0, 4), (1, 3), (2, 2), (3, 1), (4, 2), (5, 3), (6, 4),
+        (12, 1), (12, 2), (12, 3), (11, 4), (10, 5), (11, 6), (12, 6), (13, 6), (14, 5), (13, 4),
+        (19, 4), (20, 3), (21, 2), (22, 1), (23, 2), (24, 3), (25, 4),
+    ]
+    repeat_band(386, 210, red, red_birds)
+    draw.rectangle((0, 468, width, 474), fill=blue)
+    repeat_band(495, 70, blue, [(0, 0), (1, 1), (2, 2), (3, 2), (4, 1), (5, 0), (2, 3), (3, 3)])
 
     return image
 
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def load_online_image(url: str) -> Image.Image:
-    request = Request(url, headers={"User-Agent": "OrnaMap school research app"})
-    with urlopen(request, timeout=12) as response:
-        data = response.read()
-    return Image.open(BytesIO(data)).convert("RGBA")
+def draw_symbol(name: str, size: int = 260) -> Image.Image:
+    image = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(image)
+    black = (15, 16, 14, 255)
+    w = max(5, size // 32)
+    c = size // 2
+
+    if name == "Фигура с посохом":
+        draw.ellipse((c - 22, 28, c + 22, 72), fill=black)
+        draw.line((c, 72, c, 155), fill=black, width=w + 2)
+        draw.line((c, 96, c - 62, 122), fill=black, width=w)
+        draw.line((c, 96, c + 54, 125), fill=black, width=w)
+        draw.line((c, 155, c - 44, 220), fill=black, width=w)
+        draw.line((c, 155, c + 46, 220), fill=black, width=w)
+        draw.line((215, 35, 238, 225), fill=black, width=max(3, w - 2))
+        draw.line((42, 224, 215, 224), fill=black, width=w)
+    elif name == "Танцующая фигура":
+        draw.ellipse((c - 20, 24, c + 20, 64), fill=black)
+        draw.polygon((c, 64, c - 42, 170, c + 42, 170), fill=black)
+        draw.line((c - 22, 88, c - 82, 70), fill=black, width=w)
+        draw.line((c + 22, 88, c + 82, 70), fill=black, width=w)
+        draw.line((c - 16, 170, c - 38, 224), fill=black, width=w)
+        draw.line((c + 16, 170, c + 44, 224), fill=black, width=w)
+    elif name == "Треугольная фигура":
+        draw.ellipse((c - 15, 28, c + 15, 58), outline=black, width=w)
+        draw.polygon((c, 70, c - 54, 205, c + 54, 205), outline=black)
+        draw.line((c - 54, 205, c + 54, 205), fill=black, width=w)
+        draw.line((c - 82, 95, c - 38, 128), fill=black, width=w)
+        draw.line((c + 40, 128, c + 78, 96), fill=black, width=w)
+        draw.line((c - 28, 140, c + 28, 140), fill=black, width=w)
+    elif name == "Чум":
+        draw.polygon((c, 45, c - 76, 205, c + 76, 205), outline=black)
+        draw.line((c, 45, c, 205), fill=black, width=w)
+        draw.line((c - 52, 150, c + 52, 150), fill=black, width=w)
+        draw.arc((c - 46, 120, c + 46, 214), 200, 340, fill=black, width=w)
+        draw.line((45, 222, 215, 222), fill=black, width=w)
+    elif name == "Лодка":
+        draw.arc((42, 124, 220, 230), 12, 168, fill=black, width=w + 3)
+        draw.line((58, 172, 210, 172), fill=black, width=w)
+        draw.line((c, 55, c, 172), fill=black, width=w)
+        draw.line((c, 82, c - 52, 132), fill=black, width=w)
+        draw.line((c, 82, c + 44, 132), fill=black, width=w)
+        draw.line((72, 214, 210, 214), fill=black, width=w)
+    elif name == "Знак солнца":
+        draw.line((c, 32, c, 222), fill=black, width=w)
+        draw.line((55, 125, 205, 125), fill=black, width=w)
+        draw.line((80, 62, 180, 188), fill=black, width=w)
+        draw.line((180, 62, 80, 188), fill=black, width=w)
+        draw.polygon((c, 52, c - 26, 116, c + 26, 116), outline=black)
+    elif name == "Олень":
+        draw.line((65, 152, 168, 152), fill=black, width=w + 2)
+        draw.line((168, 152, 205, 112), fill=black, width=w)
+        draw.line((94, 152, 74, 210), fill=black, width=w)
+        draw.line((140, 152, 154, 210), fill=black, width=w)
+        draw.line((200, 112, 230, 92), fill=black, width=w)
+        draw.line((205, 112, 232, 132), fill=black, width=w)
+        draw.line((220, 92, 230, 62), fill=black, width=max(3, w - 1))
+    else:
+        draw.line((42, 210, 218, 210), fill=black, width=w)
+        draw.line((c, 50, c, 210), fill=black, width=w)
+        draw.line((c, 50, c - 35, 92), fill=black, width=w)
+        draw.line((c, 50, c + 36, 92), fill=black, width=w)
+        draw.line((c - 34, 138, c + 34, 138), fill=black, width=w)
+
+    return image.filter(ImageFilter.GaussianBlur(0.35))
 
 
-def load_online_or_fallback(url: str, fallback: Image.Image) -> tuple[Image.Image, bool]:
-    try:
-        return load_online_image(url), True
-    except (OSError, URLError, TimeoutError, ValueError):
-        return fallback, False
+def make_symbol_sheet() -> Image.Image:
+    cell_w, cell_h = 220, 170
+    sheet = Image.new("RGBA", (cell_w * 4, cell_h * 2), (255, 255, 255, 255))
+    for index, name in enumerate(SYMBOLS):
+        symbol = draw_symbol(name, 155)
+        x = (index % 4) * cell_w + 34
+        y = (index // 4) * cell_h + 8
+        sheet.alpha_composite(symbol, (x, y))
+    return sheet
 
 
 def open_uploaded_or_fallback(uploaded_file, fallback: Image.Image) -> Image.Image:
@@ -263,7 +275,18 @@ def make_pattern_tile(image: Image.Image, repeats: int, mirror: bool) -> Image.I
             if mirror and (x + y) % 2 == 1:
                 current = current.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
             pattern.alpha_composite(current, (x * tile_size, y * tile_size))
+    return pattern
 
+
+def make_symbol_pattern(symbol: Image.Image, repeats: int, opacity: int) -> Image.Image:
+    tile_size = 190
+    symbol = symbol.resize((tile_size, tile_size), Image.LANCZOS)
+    alpha = np.array(symbol.getchannel("A"), dtype=np.float32)
+    symbol.putalpha(Image.fromarray((alpha * (opacity / 100)).clip(0, 255).astype("uint8")))
+    pattern = Image.new("RGBA", (tile_size * repeats, tile_size * repeats), (255, 255, 255, 0))
+    for y in range(repeats):
+        for x in range(repeats):
+            pattern.alpha_composite(symbol, (x * tile_size, y * tile_size))
     return pattern
 
 
@@ -279,7 +302,6 @@ def draw_mockup(name: str) -> Image.Image:
         draw.line((375, 145, 375, 195), fill=data["accent"], width=14)
         draw.line((605, 145, 605, 195), fill=data["accent"], width=14)
         draw.rounded_rectangle((310, 188, 670, 552), radius=18, outline=(255, 255, 255, 120), width=2)
-
     elif name == "Обложка блокнота":
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (330, 105, 650, 610), 20))
         draw.rounded_rectangle((330, 105, 650, 610), radius=20, fill=data["color"])
@@ -287,32 +309,27 @@ def draw_mockup(name: str) -> Image.Image:
         draw.rounded_rectangle((348, 130, 632, 585), radius=10, outline=(255, 255, 255, 45), width=2)
         for y in range(148, 575, 48):
             draw.ellipse((315, y, 342, y + 27), fill=(30, 37, 42))
-
     elif name == "Футболка":
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (265, 125, 715, 622), 40))
         draw.polygon((320, 140, 415, 96, 490, 166, 565, 96, 660, 140, 735, 275, 670, 320, 670, 620, 310, 620, 310, 320, 245, 275), fill=data["color"], outline=data["accent"])
         draw.arc((430, 112, 550, 220), 0, 180, fill=data["accent"], width=6)
         draw.line((430, 165, 490, 205, 550, 165), fill=(220, 220, 212), width=4)
-
     elif name == "Кружка":
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (305, 215, 690, 542), 45))
         draw.rounded_rectangle((305, 215, 690, 542), radius=50, fill=data["color"], outline=data["accent"], width=6)
         draw.arc((630, 280, 830, 485), 270, 90, fill=data["accent"], width=20)
         draw.rectangle((330, 224, 668, 286), fill=(252, 253, 249))
         draw.rounded_rectangle((340, 295, 655, 505), radius=24, outline=(223, 229, 225), width=2)
-
     else:
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (190, 95, 790, 610), 16))
         draw.rectangle((190, 95, 790, 610), fill=data["color"], outline=(112, 96, 75), width=12)
         draw.rectangle((212, 117, 768, 588), outline=(196, 188, 170), width=5)
-
     return image
 
 
 def place_pattern_on_mockup(mockup: Image.Image, pattern: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
     left, top, right, bottom = box
-    target_size = (right - left, bottom - top)
-    fitted = pattern.resize(target_size, Image.LANCZOS)
+    fitted = pattern.resize((right - left, bottom - top), Image.LANCZOS)
     result = mockup.copy()
     result.alpha_composite(fitted, (left, top))
     shine = Image.new("RGBA", result.size, (255, 255, 255, 0))
@@ -329,37 +346,21 @@ def image_to_png_bytes(image: Image.Image) -> bytes:
 
 
 st.title("OrnaMap")
-st.caption("Исследуем северный орнамент и сразу примеряем его на дизайнерский макет")
+st.caption("Полосные северные орнаменты и отдельные знаки для примерки на макетах")
 
 with st.sidebar:
     st.subheader("Орнамент")
-    ornament_mode = st.radio(
-        "Источник орнамента",
-        ["Готовый", "Из интернета", "Загрузить свой"],
-        horizontal=False,
-    )
-
-    ornament_name = st.selectbox("Готовый орнамент", list(ORNAMENTS.keys()), disabled=ornament_mode != "Готовый")
-    online_ornament_name = st.selectbox(
-        "Онлайн-изображение",
-        list(ONLINE_ORNAMENTS.keys()),
-        disabled=ornament_mode != "Из интернета",
-    )
+    ornament_type = st.radio("Тип узора", ["Полосной орнамент", "Отдельный рисунок", "Загрузить свой"], horizontal=False)
+    selected_symbol = st.selectbox("Рисунок из второго изображения", SYMBOLS, disabled=ornament_type != "Отдельный рисунок")
     uploaded_ornament = st.file_uploader(
-        "Загрузите изображение орнамента",
+        "Загрузите свой орнамент",
         type=["png", "jpg", "jpeg", "webp"],
-        disabled=ornament_mode != "Загрузить свой",
+        disabled=ornament_type != "Загрузить свой",
     )
 
     st.subheader("Макет")
-    mockup_mode = st.radio(
-        "Источник макета",
-        ["Готовый", "Из интернета", "Загрузить свой"],
-        horizontal=False,
-    )
-
+    mockup_mode = st.radio("Источник макета", ["Готовый", "Загрузить свой"], horizontal=True)
     mockup_name = st.selectbox("Готовый макет", list(MOCKUPS.keys()), disabled=mockup_mode != "Готовый")
-    online_mockup_name = st.selectbox("Онлайн-макет", list(ONLINE_MOCKUPS.keys()), disabled=mockup_mode != "Из интернета")
     uploaded_mockup = st.file_uploader(
         "Загрузите изображение макета",
         type=["png", "jpg", "jpeg", "webp"],
@@ -367,13 +368,13 @@ with st.sidebar:
     )
 
     color_count = st.slider("Сколько основных цветов найти", 2, 6, 4)
-    repeats = st.slider("Повторы узора", 2, 7, 4)
+    repeats = st.slider("Повторы узора", 1, 7, 3 if ornament_type == "Отдельный рисунок" else 4)
     opacity = st.slider("Прозрачность наложения", 35, 100, 88)
     edge_strength = st.slider("Сила выделения контура", 1, 12, 5)
-    mirror = st.toggle("Чередовать зеркальные плитки", value=True)
+    mirror = st.toggle("Чередовать зеркальные плитки", value=True, disabled=ornament_type == "Отдельный рисунок")
 
     custom_box = None
-    if mockup_mode != "Готовый":
+    if mockup_mode == "Загрузить свой":
         st.subheader("Область наложения")
         x = st.slider("Смещение по горизонтали", 0, 760, 300)
         y = st.slider("Смещение по вертикали", 0, 520, 180)
@@ -382,59 +383,60 @@ with st.sidebar:
         custom_box = (x, y, min(CANVAS_SIZE[0], x + w), min(CANVAS_SIZE[1], y + h))
 
 
-offline_ornament = make_ornament(ornament_name)
-online_loaded = None
-if ornament_mode == "Из интернета":
-    source_raw, online_loaded = load_online_or_fallback(ONLINE_ORNAMENTS[online_ornament_name], offline_ornament)
-elif ornament_mode == "Загрузить свой":
-    source_raw = open_uploaded_or_fallback(uploaded_ornament, offline_ornament)
-else:
-    source_raw = offline_ornament
-source = fit_to_square(source_raw)
+strip = make_strip_ornament()
+symbol = draw_symbol(selected_symbol)
 
-if mockup_mode == "Из интернета":
-    fallback_mockup = draw_mockup("Кружка" if "кружки" in online_mockup_name else "Шоппер")
-    mockup_raw, mockup_online_loaded = load_online_or_fallback(ONLINE_MOCKUPS[online_mockup_name], fallback_mockup)
-    mockup_base = fit_to_canvas(mockup_raw)
-    placement_box = custom_box or (300, 180, 660, 480)
-    result_caption = f"Онлайн-макет: {online_mockup_name}"
-elif mockup_mode == "Загрузить свой":
+if ornament_type == "Полосной орнамент":
+    source = fit_to_square(strip)
+    palette = find_palette(source, color_count)
+    recolored = recolor_image(source, palette, opacity)
+    tile = Image.alpha_composite(recolored, edge_map(source, edge_strength))
+    pattern = make_pattern_tile(tile, repeats, mirror)
+    source_caption = "Полосной орнамент по первому изображению"
+elif ornament_type == "Отдельный рисунок":
+    source = fit_to_square(symbol)
+    palette = find_palette(source, color_count)
+    pattern = make_symbol_pattern(symbol, repeats, opacity)
+    source_caption = f"Вырезанный рисунок: {selected_symbol}"
+else:
+    fallback = strip
+    source = fit_to_square(open_uploaded_or_fallback(uploaded_ornament, fallback))
+    palette = find_palette(source, color_count)
+    recolored = recolor_image(source, palette, opacity)
+    tile = Image.alpha_composite(recolored, edge_map(source, edge_strength))
+    pattern = make_pattern_tile(tile, repeats, mirror)
+    source_caption = "Пользовательский орнамент"
+
+if mockup_mode == "Загрузить свой":
     mockup_base = fit_to_canvas(open_uploaded_or_fallback(uploaded_mockup, draw_mockup("Плакат")))
     placement_box = custom_box or (300, 180, 660, 480)
     result_caption = "Пользовательский макет"
 else:
-    mockup_online_loaded = True
     mockup_base = draw_mockup(mockup_name)
     placement_box = MOCKUPS[mockup_name]["box"]
     result_caption = f"Макет: {mockup_name}"
 
-palette = find_palette(source, color_count)
-recolored = recolor_image(source, palette, opacity)
-edges = edge_map(source, edge_strength)
-tile = Image.alpha_composite(recolored, edges)
-pattern = make_pattern_tile(tile, repeats, mirror)
 result = place_pattern_on_mockup(mockup_base, pattern, placement_box)
 
 left, right = st.columns([1, 1.25])
 
 with left:
-    st.subheader("Анализ орнамента")
-    st.image(source, caption="Источник узора", width="stretch")
+    st.subheader("Источник узора")
+    st.image(source, caption=source_caption, width="stretch")
     swatches = "".join(
         f"<span style='display:inline-block;width:54px;height:38px;background:rgb{color};"
         "border-radius:10px;border:1px solid rgba(32,57,69,0.18);margin-right:8px'></span>"
         for color in palette
     )
     st.markdown(swatches, unsafe_allow_html=True)
-    st.markdown("<p class='source-note'>KMeans находит основные цветовые группы, а фильтр контуров усиливает форму узора.</p>", unsafe_allow_html=True)
-    if ornament_mode == "Из интернета" and not online_loaded:
-        st.warning("Онлайн-изображение не загрузилось, поэтому показан встроенный орнамент.")
+    st.markdown(
+        "<p class='source-note'>Для полосы строится повторяющийся паттерн. Для второго изображения отдельные знаки уже разнесены по списку и накладываются как самостоятельные мотивы.</p>",
+        unsafe_allow_html=True,
+    )
 
 with right:
     st.subheader("Примерка на макете")
     st.image(result, caption=result_caption, width="stretch")
-    if mockup_mode == "Из интернета" and not mockup_online_loaded:
-        st.warning("Онлайн-макет не загрузился, поэтому показан встроенный макет.")
     st.download_button(
         "Скачать результат PNG",
         data=image_to_png_bytes(result),
@@ -444,43 +446,42 @@ with right:
 
 st.divider()
 
-gallery_cols = st.columns(5)
-for index, name in enumerate(MOCKUPS):
-    with gallery_cols[index % 5]:
-        st.image(draw_mockup(name), caption=name, width="stretch")
+st.subheader("Разрезанные рисунки из второго изображения")
+symbol_cols = st.columns(4)
+for index, name in enumerate(SYMBOLS):
+    with symbol_cols[index % 4]:
+        st.image(draw_symbol(name), caption=name, width="stretch")
 
-tab1, tab2, tab3 = st.tabs(["Как работает", "Источники", "Для защиты"])
+tab1, tab2, tab3 = st.tabs(["Как работает", "Для защиты", "Что улучшить дальше"])
 
 with tab1:
     st.markdown(
         """
-        1. Пользователь выбирает готовый орнамент, онлайн-изображение или загружает свой файл.
-        2. Программа переводит изображение в массив пикселей и ищет основные цвета методом KMeans.
-        3. Фильтр контуров выделяет линии, чтобы узор читался лучше.
-        4. Из фрагмента создается повторяющийся паттерн.
-        5. Паттерн накладывается на готовый, онлайн или пользовательский макет.
+        1. Первый референс используется как полосной орнамент: программа повторяет его как декоративную ленту.
+        2. Второй референс представлен как набор отдельных рисунков: каждый знак можно выбрать отдельно.
+        3. KMeans находит основные цвета, а фильтр контуров усиливает линии.
+        4. Итоговый паттерн накладывается на выбранный макет и скачивается как PNG.
         """
     )
 
 with tab2:
     st.markdown(
         """
-        Онлайн-режим использует открытые изображения с Wikimedia Commons. Если сеть недоступна,
-        приложение автоматически возвращается к встроенным изображениям, чтобы демонстрация не сорвалась.
+        **Фраза для выступления:** я взяла два типа северных визуальных мотивов: полосный орнамент
+        и отдельные знаки. В приложении они превращаются в цифровые элементы дизайна, которые можно
+        примерить на предметы.
 
-        Для школьной работы важно проговорить: реальные культурные орнаменты нужно использовать бережно,
-        с указанием источника и без искажения смысла.
+        **Информатика здесь:** изображение представлено пикселями, цвета анализируются алгоритмом KMeans,
+        а макет собирается программно из нескольких слоев.
         """
     )
-    st.markdown("- Wikimedia Commons: Kola Peninsula, White mugs, Tote bags")
 
 with tab3:
     st.markdown(
         """
-        **Коротко для рассказа:** я создала веб-приложение, где можно выбрать или загрузить орнамент,
-        программа находит его палитру, усиливает контуры и показывает, как узор будет выглядеть на макете.
-
-        **Что здесь от информатики:** изображение хранится как пиксели, цвета анализируются алгоритмом KMeans,
-        а результат собирается программно в новом изображении.
+        - добавить автоматическое разрезание загруженной фотографии с отдельными знаками;
+        - сохранять библиотеку пользовательских мотивов;
+        - распознавать тип узора: полоса, одиночный знак, сетка;
+        - добавить экспорт не только PNG, но и PDF-лист для печати.
         """
     )
