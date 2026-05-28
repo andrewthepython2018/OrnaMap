@@ -1,6 +1,7 @@
 from io import BytesIO
 from math import cos, pi, sin
 import os
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -17,6 +18,11 @@ RED = (228, 31, 49)
 BLUE = (29, 68, 154)
 INK = (14, 16, 15)
 PAPER = (250, 249, 243)
+SAMPLE_SOURCES = {
+    "s1.jpg": Path("sample/s1.jpg"),
+    "s2.jpg": Path("sample/s2.jpg"),
+    "s3.jpg": Path("sample/s3.jpg"),
+}
 
 st.markdown(
     """
@@ -129,8 +135,12 @@ def demo_strip() -> Image.Image:
 def load_source(uploaded, mode: str) -> Image.Image:
     if uploaded:
         image = Image.open(uploaded).convert("RGBA")
+    elif mode in SAMPLE_SOURCES and SAMPLE_SOURCES[mode].exists():
+        image = Image.open(SAMPLE_SOURCES[mode]).convert("RGBA")
+    elif mode == "s1.jpg":
+        image = demo_strip()
     else:
-        image = demo_strip() if mode == "Полосной орнамент" else demo_symbols()
+        image = demo_symbols()
     scale = max(image.size) / 1200
     if scale > 1:
         image = image.resize((int(image.width / scale), int(image.height / scale)), Image.Resampling.LANCZOS)
@@ -228,6 +238,14 @@ def place(canvas: Image.Image, image: Image.Image, center, size: int, angle: flo
     canvas.alpha_composite(icon, (int(center[0] - icon.width / 2), int(center[1] - icon.height / 2)))
 
 
+def tint_element(image: Image.Image, color: tuple[int, int, int]) -> Image.Image:
+    icon = image.copy().convert("RGBA")
+    alpha = icon.getchannel("A").filter(ImageFilter.GaussianBlur(.2))
+    tinted = Image.new("RGBA", icon.size, rgba(color))
+    tinted.putalpha(alpha)
+    return tinted
+
+
 def fallback_elements() -> list[dict]:
     image = demo_symbols()
     return extract_elements(image, make_mask(image, 232, 11), 520, 12)
@@ -235,45 +253,100 @@ def fallback_elements() -> list[dict]:
 
 def generate_ribbon(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
     elements = elements or fallback_elements()
-    image = Image.new("RGBA", (1200, 300), rgba(PAPER))
+    colors = colors or [INK]
+    image = Image.new("RGBA", (1200, 330), rgba(PAPER))
     draw = ImageDraw.Draw(image)
-    draw.rectangle((0, 0, 1200, 18), fill=rgba(colors[0]))
-    draw.rectangle((0, 282, 1200, 300), fill=rgba(colors[min(1, len(colors) - 1)]))
-    for i, x in enumerate(range(65, 1200, 130)):
-        place(image, elements[i % len(elements)]["image"], (x, 150), 112, 0 if i % 2 == 0 else 180)
+    c1, c2 = colors[0], colors[min(1, len(colors) - 1)]
+    draw.rectangle((0, 0, 1200, 20), fill=rgba(c1))
+    draw.rectangle((0, 310, 1200, 330), fill=rgba(c2))
+    draw.line((0, 54, 1200, 54), fill=rgba(c2), width=6)
+    draw.line((0, 276, 1200, 276), fill=rgba(c1), width=6)
+    for x in range(22, 1200, 56):
+        draw.polygon((x, 34, x + 15, 18, x + 30, 34, x + 15, 50), fill=rgba(c2 if x // 56 % 2 else c1))
+        draw.polygon((x, 296, x + 15, 280, x + 30, 296, x + 15, 312), fill=rgba(c1 if x // 56 % 2 else c2))
+    for i, x in enumerate(range(70, 1200, 120)):
+        color = colors[i % len(colors)]
+        icon = tint_element(elements[i % len(elements)]["image"], color)
+        place(image, icon, (x, 165), 106, 0 if i % 2 == 0 else 180)
+        draw.ellipse((x - 8, 74, x + 8, 90), fill=rgba(c2))
+        draw.ellipse((x - 8, 240, x + 8, 256), fill=rgba(c1))
     return image
 
 
 def generate_fabric(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
     elements = elements or fallback_elements()
-    image = Image.new("RGBA", (920, 620), (248, 246, 239, 255))
+    colors = colors or [INK]
+    image = Image.new("RGBA", (980, 680), (248, 246, 239, 255))
     draw = ImageDraw.Draw(image)
-    for y in range(0, 620, 116):
-        for x in range(0, 920, 116):
-            fill = (255, 255, 250, 255) if (x + y) // 116 % 2 == 0 else (235, 241, 239, 255)
-            draw.rectangle((x, y, x + 116, y + 116), fill=fill)
-    for row, y in enumerate(range(58, 620, 116)):
-        for col, x in enumerate(range(58, 920, 116)):
-            place(image, elements[(row * 7 + col) % len(elements)]["image"], (x, y), 88, 0 if (row + col) % 2 == 0 else 180)
-    draw.rounded_rectangle((18, 18, 902, 602), radius=20, outline=rgba(colors[0]), width=5)
+    for y in range(0, 680, 108):
+        for x in range(0, 980, 108):
+            fill = (255, 255, 250, 255) if (x + y) // 108 % 2 == 0 else (237, 244, 242, 255)
+            draw.rectangle((x, y, x + 108, y + 108), fill=fill)
+            draw.line((x, y + 108, x + 108, y), fill=(224, 218, 204, 255), width=1)
+    for row, y in enumerate(range(54, 680, 108)):
+        offset = 54 if row % 2 else 0
+        for col, x in enumerate(range(54 + offset, 980, 108)):
+            color = colors[(row + col) % len(colors)]
+            icon = tint_element(elements[(row * 8 + col) % len(elements)]["image"], color)
+            place(image, icon, (x, y), 80, 0 if (row + col) % 2 == 0 else 180)
+    for i, color in enumerate(colors[:4]):
+        draw.rounded_rectangle((22 + i * 8, 22 + i * 8, 958 - i * 8, 658 - i * 8), radius=20, outline=rgba(color), width=3)
     return image
 
 
 def generate_circle(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
     elements = elements or fallback_elements()
+    colors = colors or [INK]
     image = Image.new("RGBA", (760, 760), rgba(PAPER))
     draw = ImageDraw.Draw(image)
-    draw.ellipse((72, 72, 688, 688), outline=rgba(colors[0]), width=7)
-    draw.ellipse((180, 180, 580, 580), outline=rgba(colors[min(1, len(colors) - 1)]), width=5)
-    for ring, radius in enumerate([116, 220, 306]):
+    c1, c2 = colors[0], colors[min(1, len(colors) - 1)]
+    draw.ellipse((60, 60, 700, 700), outline=rgba(c1), width=8)
+    draw.ellipse((112, 112, 648, 648), outline=rgba(c2), width=3)
+    draw.ellipse((184, 184, 576, 576), outline=rgba(c1), width=5)
+    for i in range(24):
+        angle = 2 * pi * i / 24
+        x1 = 380 + int(cos(angle) * 326)
+        y1 = 380 + int(sin(angle) * 326)
+        x2 = 380 + int(cos(angle) * 286)
+        y2 = 380 + int(sin(angle) * 286)
+        draw.line((x1, y1, x2, y2), fill=rgba(c2 if i % 2 else c1), width=3)
+    for ring, radius in enumerate([112, 214, 304]):
         count = 8 + ring * 4
         for i in range(count):
             angle = 2 * pi * i / count
             x = 380 + int(cos(angle) * radius)
             y = 380 + int(sin(angle) * radius)
-            place(image, elements[(i + ring * 3) % len(elements)]["image"], (x, y), 78 - ring * 6, angle * 180 / pi + 90)
-    draw.ellipse((344, 344, 416, 416), fill=rgba(colors[0]))
+            color = colors[(i + ring) % len(colors)]
+            icon = tint_element(elements[(i + ring * 3) % len(elements)]["image"], color)
+            place(image, icon, (x, y), 84 - ring * 6, angle * 180 / pi + 90)
+    draw.ellipse((334, 334, 426, 426), fill=rgba(c1))
+    draw.ellipse((356, 356, 404, 404), fill=rgba(PAPER))
     return image
+
+
+def generate_poster(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
+    elements = elements or fallback_elements()
+    colors = colors or [INK]
+    poster = Image.new("RGBA", (1200, 760), (255, 252, 244, 255))
+    draw = ImageDraw.Draw(poster)
+    c1, c2 = colors[0], colors[min(1, len(colors) - 1)]
+    draw.rounded_rectangle((24, 24, 1176, 736), radius=30, fill=(250, 248, 240, 255), outline=rgba(c1), width=5)
+    ribbon = generate_ribbon(elements, colors).resize((1080, 250), Image.Resampling.LANCZOS)
+    poster.alpha_composite(ribbon, (60, 52))
+    fabric = generate_fabric(elements, colors).resize((430, 300), Image.Resampling.LANCZOS)
+    poster.alpha_composite(fabric, (58, 394))
+    circle = generate_circle(elements, colors).resize((390, 390), Image.Resampling.LANCZOS)
+    poster.alpha_composite(circle, (710, 330))
+    for index, item in enumerate(elements[:7]):
+        x = 560 + index * 26
+        y = 406 + (index % 2) * 118
+        color = colors[index % len(colors)]
+        icon = tint_element(item["image"], color)
+        place(poster, icon, (x, y), 96, -18 if index % 2 else 18)
+    draw.line((540, 350, 540, 700), fill=rgba(c2), width=5)
+    draw.line((680, 350, 680, 700), fill=rgba(c1), width=5)
+    draw.text((560, 326), "Новый узор из найденных фрагментов", fill=(28, 44, 52, 255))
+    return poster
 
 
 def period(mask: np.ndarray) -> int:
@@ -290,7 +363,7 @@ def period(mask: np.ndarray) -> int:
 
 with st.sidebar:
     st.subheader("Источник")
-    source_mode = st.radio("Изображение", ["Лист знаков", "Полосной орнамент", "Загрузить свое"])
+    source_mode = st.radio("Изображение", [*SAMPLE_SOURCES.keys(), "Загрузить свое"])
     upload = st.file_uploader("PNG, JPG, WEBP", type=["png", "jpg", "jpeg", "webp"], disabled=source_mode != "Загрузить свое")
     st.subheader("Распознавание")
     sensitivity = st.slider("Чувствительность к фону", 170, 248, 232)
@@ -316,6 +389,11 @@ elements = extract_elements(source, mask, min_area, padding)
 colors = palette(source, mask)
 repeat = period(mask)
 fill = int((mask > 0).mean() * 100)
+board = element_board(elements, colors)
+poster = generate_poster(elements, colors)
+ribbon = generate_ribbon(elements, colors)
+fabric = generate_fabric(elements, colors)
+circle = generate_circle(elements, colors)
 
 left, right = st.columns([1, 1.2])
 with left:
@@ -332,12 +410,24 @@ with left:
 
 with right:
     st.subheader("Найденные элементы")
-    board = element_board(elements, colors)
     st.image(board, width="stretch")
     st.download_button("Скачать карточку элементов", data=png_bytes(board), file_name="ornamap_elements.png", mime="image/png")
+    st.subheader("Новые орнаменты из этих элементов")
+    st.image(poster, caption="Витрина: лента, сетка и круговая композиция вместе", width="stretch")
+    st.download_button("Скачать витрину PNG", data=png_bytes(poster), file_name="ornamap_showcase.png", mime="image/png")
+    gen_a, gen_b, gen_c = st.tabs(["Лента", "Сетка", "Круг"])
+    with gen_a:
+        st.image(ribbon, width="stretch")
+        st.download_button("Скачать ленту", data=png_bytes(ribbon), file_name="ornamap_ribbon.png", mime="image/png")
+    with gen_b:
+        st.image(fabric, width="stretch")
+        st.download_button("Скачать сетку", data=png_bytes(fabric), file_name="ornamap_fabric.png", mime="image/png")
+    with gen_c:
+        st.image(circle, width="stretch")
+        st.download_button("Скачать круг", data=png_bytes(circle), file_name="ornamap_circle.png", mime="image/png")
 
 st.divider()
-tab_steps, tab_generate, tab_science = st.tabs(["Как видит программа", "Новые орнаменты", "Для защиты"])
+tab_steps, tab_science = st.tabs(["Как видит программа", "Для защиты"])
 
 with tab_steps:
     c1, c2, c3 = st.columns(3)
@@ -352,19 +442,6 @@ with tab_steps:
             draw.rounded_rectangle((42 + i * 145, 58, 142 + i * 145, 158), radius=20, fill=rgba(color), outline=(190, 180, 165, 255), width=2)
             draw.text((42 + i * 145, 174), f"RGB {color}", fill=(43, 58, 65, 255))
         st.image(swatches, caption="3. Палитра KMeans", width="stretch")
-
-with tab_generate:
-    g1, g2 = st.columns([1.2, 1])
-    with g1:
-        ribbon = generate_ribbon(elements, colors)
-        fabric = generate_fabric(elements, colors)
-        st.image(ribbon, caption="Лента из найденных элементов", width="stretch")
-        st.download_button("Скачать ленту PNG", data=png_bytes(ribbon), file_name="ornamap_ribbon.png", mime="image/png")
-        st.image(fabric, caption="Повторяющийся паттерн для ткани", width="stretch")
-    with g2:
-        circle = generate_circle(elements, colors)
-        st.image(circle, caption="Круговая композиция", width="stretch")
-        st.download_button("Скачать круговую композицию", data=png_bytes(circle), file_name="ornamap_circle.png", mime="image/png")
 
 with tab_science:
     st.markdown(
