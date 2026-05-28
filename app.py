@@ -1,8 +1,10 @@
 from io import BytesIO
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 import numpy as np
 import streamlit as st
-from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageOps
 from sklearn.cluster import KMeans
 
 
@@ -11,11 +13,31 @@ st.set_page_config(page_title="OrnaMap", page_icon="OM", layout="wide")
 CANVAS_SIZE = (980, 680)
 
 MOCKUPS = {
-    "Шоппер": {"box": (318, 195, 662, 530), "color": (238, 231, 213), "accent": (126, 104, 76)},
-    "Обложка блокнота": {"box": (335, 135, 630, 555), "color": (52, 67, 75), "accent": (226, 180, 78)},
-    "Плакат": {"box": (210, 112, 770, 590), "color": (250, 247, 238), "accent": (112, 96, 75)},
-    "Футболка": {"box": (350, 210, 630, 460), "color": (243, 243, 235), "accent": (164, 166, 157)},
-    "Кружка": {"box": (355, 265, 625, 455), "color": (248, 249, 245), "accent": (178, 185, 184)},
+    "Шоппер": {
+        "box": (355, 215, 625, 505),
+        "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Tote%20Bag.jpeg?width=900",
+        "source": "Wikimedia Commons: Tote Bag.jpeg",
+    },
+    "Блокнот": {
+        "box": (210, 145, 765, 520),
+        "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Blank%20Notebook.jpg?width=900",
+        "source": "Wikimedia Commons: Blank Notebook.jpg",
+    },
+    "Плакат": {
+        "box": (304, 88, 668, 635),
+        "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Blank%20poster%20for%20Fedoruk%20screenings%20%2816739030627%29.jpg?width=900",
+        "source": "Wikimedia Commons: Blank poster for Fedoruk screenings",
+    },
+    "Футболка": {
+        "box": (378, 230, 600, 430),
+        "url": "https://commons.wikimedia.org/wiki/Special:FilePath/White%20T%20shirt.jpg?width=900",
+        "source": "Wikimedia Commons: White T shirt.jpg",
+    },
+    "Кружка": {
+        "box": (360, 250, 625, 450),
+        "url": "https://commons.wikimedia.org/wiki/Special:FilePath/Taza%20Blanca.jpg?width=900",
+        "source": "Wikimedia Commons: Taza Blanca.jpg",
+    },
 }
 
 SYMBOLS = [
@@ -290,41 +312,59 @@ def make_symbol_pattern(symbol: Image.Image, repeats: int, opacity: int) -> Imag
     return pattern
 
 
-def draw_mockup(name: str) -> Image.Image:
-    data = MOCKUPS[name]
+@st.cache_data(show_spinner=False, ttl=3600)
+def load_mockup_from_url(url: str) -> Image.Image:
+    request = Request(url, headers={"User-Agent": "OrnaMap school research app"})
+    with urlopen(request, timeout=12) as response:
+        data = response.read()
+    return Image.open(BytesIO(data)).convert("RGBA")
+
+
+def fit_photo_mockup(image: Image.Image, size: tuple[int, int] = CANVAS_SIZE) -> Image.Image:
+    image = ImageOps.contain(image.convert("RGBA"), size, Image.LANCZOS)
+    canvas = Image.new("RGBA", size, (246, 244, 238, 255))
+    canvas.alpha_composite(image, ((size[0] - image.width) // 2, (size[1] - image.height) // 2))
+    return canvas
+
+
+def make_fallback_mockup(name: str) -> Image.Image:
     image = textured_background(CANVAS_SIZE)
     draw = ImageDraw.Draw(image)
 
     if name == "Шоппер":
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (275, 145, 705, 610), 32))
-        draw.rounded_rectangle((275, 145, 705, 610), radius=32, fill=data["color"], outline=(185, 172, 148), width=5)
-        draw.arc((375, 40, 605, 250), 180, 360, fill=data["accent"], width=14)
-        draw.line((375, 145, 375, 195), fill=data["accent"], width=14)
-        draw.line((605, 145, 605, 195), fill=data["accent"], width=14)
+        draw.rounded_rectangle((275, 145, 705, 610), radius=32, fill=(238, 231, 213), outline=(185, 172, 148), width=5)
+        draw.arc((375, 40, 605, 250), 180, 360, fill=(126, 104, 76), width=14)
+        draw.line((375, 145, 375, 195), fill=(126, 104, 76), width=14)
+        draw.line((605, 145, 605, 195), fill=(126, 104, 76), width=14)
         draw.rounded_rectangle((310, 188, 670, 552), radius=18, outline=(255, 255, 255, 120), width=2)
-    elif name == "Обложка блокнота":
-        image.alpha_composite(shadow_layer(CANVAS_SIZE, (330, 105, 650, 610), 20))
-        draw.rounded_rectangle((330, 105, 650, 610), radius=20, fill=data["color"])
-        draw.rectangle((365, 105, 386, 610), fill=data["accent"])
-        draw.rounded_rectangle((348, 130, 632, 585), radius=10, outline=(255, 255, 255, 45), width=2)
-        for y in range(148, 575, 48):
-            draw.ellipse((315, y, 342, y + 27), fill=(30, 37, 42))
+    elif name == "Блокнот":
+        image.alpha_composite(shadow_layer(CANVAS_SIZE, (220, 130, 760, 555), 20))
+        draw.rounded_rectangle((220, 130, 760, 555), radius=20, fill=(248, 246, 238), outline=(198, 190, 176), width=5)
+        draw.line((245, 130, 245, 555), fill=(190, 182, 168), width=8)
     elif name == "Футболка":
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (265, 125, 715, 622), 40))
-        draw.polygon((320, 140, 415, 96, 490, 166, 565, 96, 660, 140, 735, 275, 670, 320, 670, 620, 310, 620, 310, 320, 245, 275), fill=data["color"], outline=data["accent"])
-        draw.arc((430, 112, 550, 220), 0, 180, fill=data["accent"], width=6)
+        draw.polygon((320, 140, 415, 96, 490, 166, 565, 96, 660, 140, 735, 275, 670, 320, 670, 620, 310, 620, 310, 320, 245, 275), fill=(245, 245, 239), outline=(164, 166, 157))
+        draw.arc((430, 112, 550, 220), 0, 180, fill=(164, 166, 157), width=6)
         draw.line((430, 165, 490, 205, 550, 165), fill=(220, 220, 212), width=4)
     elif name == "Кружка":
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (305, 215, 690, 542), 45))
-        draw.rounded_rectangle((305, 215, 690, 542), radius=50, fill=data["color"], outline=data["accent"], width=6)
-        draw.arc((630, 280, 830, 485), 270, 90, fill=data["accent"], width=20)
+        draw.rounded_rectangle((305, 215, 690, 542), radius=50, fill=(248, 249, 245), outline=(178, 185, 184), width=6)
+        draw.arc((630, 280, 830, 485), 270, 90, fill=(178, 185, 184), width=20)
         draw.rectangle((330, 224, 668, 286), fill=(252, 253, 249))
         draw.rounded_rectangle((340, 295, 655, 505), radius=24, outline=(223, 229, 225), width=2)
     else:
         image.alpha_composite(shadow_layer(CANVAS_SIZE, (190, 95, 790, 610), 16))
-        draw.rectangle((190, 95, 790, 610), fill=data["color"], outline=(112, 96, 75), width=12)
+        draw.rectangle((190, 95, 790, 610), fill=(250, 248, 240), outline=(112, 96, 75), width=12)
         draw.rectangle((212, 117, 768, 588), outline=(196, 188, 170), width=5)
     return image
+
+
+def get_ready_mockup(name: str) -> tuple[Image.Image, bool]:
+    try:
+        return fit_photo_mockup(load_mockup_from_url(MOCKUPS[name]["url"])), True
+    except (OSError, URLError, TimeoutError, ValueError):
+        return make_fallback_mockup(name), False
 
 
 def place_pattern_on_mockup(mockup: Image.Image, pattern: Image.Image, box: tuple[int, int, int, int]) -> Image.Image:
@@ -408,11 +448,12 @@ else:
     source_caption = "Пользовательский орнамент"
 
 if mockup_mode == "Загрузить свой":
-    mockup_base = fit_to_canvas(open_uploaded_or_fallback(uploaded_mockup, draw_mockup("Плакат")))
+    mockup_base = fit_to_canvas(open_uploaded_or_fallback(uploaded_mockup, make_fallback_mockup("Плакат")))
     placement_box = custom_box or (300, 180, 660, 480)
     result_caption = "Пользовательский макет"
+    mockup_loaded = True
 else:
-    mockup_base = draw_mockup(mockup_name)
+    mockup_base, mockup_loaded = get_ready_mockup(mockup_name)
     placement_box = MOCKUPS[mockup_name]["box"]
     result_caption = f"Макет: {mockup_name}"
 
@@ -437,6 +478,8 @@ with left:
 with right:
     st.subheader("Примерка на макете")
     st.image(result, caption=result_caption, width="stretch")
+    if mockup_mode == "Готовый" and not mockup_loaded:
+        st.warning("Готовое фото макета не загрузилось, поэтому показана запасная светлая схема.")
     st.download_button(
         "Скачать результат PNG",
         data=image_to_png_bytes(result),
@@ -485,3 +528,8 @@ with tab3:
         - добавить экспорт не только PNG, но и PDF-лист для печати.
         """
     )
+
+st.caption(
+    "Готовые фото макетов загружаются с Wikimedia Commons: Tote Bag.jpeg, Blank Notebook.jpg, "
+    "Blank poster for Fedoruk screenings, White T shirt.jpg, Taza Blanca.jpg."
+)
