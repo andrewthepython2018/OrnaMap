@@ -367,7 +367,7 @@ with st.sidebar:
     upload = st.file_uploader("PNG, JPG, WEBP", type=["png", "jpg", "jpeg", "webp"], disabled=source_mode != "Загрузить свое")
     st.subheader("Распознавание")
     sensitivity = st.slider("Чувствительность к фону", 170, 248, 232)
-    close_size = st.slider("Склеивание линий", 3, 25, 11, step=2)
+    close_size = st.slider("Склеивание линий", 3, 25, 3, step=2)
     min_area = st.slider("Минимальный размер фрагмента", 80, 5000, 520)
     padding = st.slider("Отступ вокруг фрагмента", 2, 32, 12)
 
