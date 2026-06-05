@@ -2,15 +2,13 @@ from io import BytesIO
 from math import cos, pi, sin
 import os
 from pathlib import Path
-
 import cv2
 import numpy as np
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageEnhance
 
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "2")
 from sklearn.cluster import KMeans
-
 
 st.set_page_config(page_title="OrnaMap Vision", page_icon="OM", layout="wide")
 
@@ -18,6 +16,7 @@ RED = (228, 31, 49)
 BLUE = (29, 68, 154)
 INK = (14, 16, 15)
 PAPER = (250, 249, 243)
+
 SAMPLE_SOURCES = {
     "s1.jpg": Path("sample/s1.jpg"),
     "s2.jpg": Path("sample/s2.jpg"),
@@ -26,25 +25,205 @@ SAMPLE_SOURCES = {
 
 st.markdown(
     """
-    <style>
-    .stApp {
-        background:
-            radial-gradient(circle at 8% 8%, rgba(228,31,49,.13), transparent 24%),
-            radial-gradient(circle at 94% 10%, rgba(29,68,154,.14), transparent 25%),
-            linear-gradient(135deg, #f8f2e8 0%, #eef5f3 52%, #fffaf2 100%);
-    }
-    .block-container { max-width: 1340px; padding-top: 1.25rem; }
-    h1 { color: #172b35; font-size: 4.1rem !important; line-height: .96 !important; letter-spacing: 0 !important; }
-    h2, h3 { color: #172b35; letter-spacing: 0 !important; }
-    [data-testid="stSidebar"] { background: #f4efe5; border-right: 1px solid rgba(23,43,53,.13); }
-    div[data-testid="stImage"] img { border-radius: 18px; box-shadow: 0 20px 54px rgba(24,36,42,.15); }
-    .lead { color: #52646c; max-width: 900px; font-size: 1.05rem; line-height: 1.52; }
-    .chip { display: inline-block; margin: 0 7px 7px 0; padding: 7px 11px; border-radius: 999px; background: rgba(255,255,255,.68); border: 1px solid rgba(23,43,53,.12); color: #344851; font-size: .92rem; }
-    .metric { background: rgba(255,255,255,.68); border: 1px solid rgba(23,43,53,.11); border-radius: 16px; padding: 14px 16px; min-height: 84px; }
-    .metric b { color: #172b35; font-size: 1.3rem; }
-    .metric span { color: #64747b; font-size: .9rem; }
-    </style>
-    """,
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+
+/* ── base & background ── */
+html, body, [data-testid="stAppViewContainer"] {
+    font-family: 'Inter', sans-serif;
+}
+.stApp {
+    background:
+        radial-gradient(ellipse at 6% 0%,  rgba(228,31,49,.10) 0%, transparent 38%),
+        radial-gradient(ellipse at 96% 4%,  rgba(29,68,154,.11) 0%, transparent 36%),
+        radial-gradient(ellipse at 50% 100%, rgba(29,68,154,.06) 0%, transparent 50%),
+        linear-gradient(160deg, #faf5ed 0%, #f0f5f2 55%, #fdf8f0 100%);
+    min-height: 100vh;
+}
+.block-container {
+    max-width: 1380px !important;
+    padding-top: 2rem !important;
+    padding-bottom: 3rem !important;
+}
+
+/* ── typography ── */
+h1 {
+    font-family: 'Cormorant Garamond', serif !important;
+    color: #111e26 !important;
+    font-size: 5rem !important;
+    font-weight: 600 !important;
+    line-height: .92 !important;
+    letter-spacing: -.02em !important;
+    margin-bottom: .15em !important;
+}
+h2 {
+    font-family: 'Cormorant Garamond', serif !important;
+    color: #1a2e38 !important;
+    font-size: 1.55rem !important;
+    font-weight: 600 !important;
+    letter-spacing: -.01em !important;
+    border-bottom: 1.5px solid rgba(23,43,53,.10);
+    padding-bottom: .35em;
+    margin-top: 1.6em !important;
+}
+h3 {
+    font-family: 'Cormorant Garamond', serif !important;
+    color: #1a2e38 !important;
+    font-size: 1.25rem !important;
+    font-weight: 600 !important;
+}
+
+/* ── hero header block ── */
+.hero {
+    padding: .5rem 0 1.6rem;
+    border-bottom: 1.5px solid rgba(23,43,53,.09);
+    margin-bottom: 1.8rem;
+}
+.hero-eyebrow {
+    font-size: .78rem;
+    font-weight: 500;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: #e41f31;
+    margin-bottom: .6em;
+}
+.lead {
+    font-family: 'Cormorant Garamond', serif;
+    color: #3d5059;
+    max-width: 820px;
+    font-size: 1.22rem;
+    line-height: 1.6;
+    font-style: italic;
+    margin-top: .5em;
+}
+.chip-row { margin-top: 1.1em; }
+.chip {
+    display: inline-block;
+    margin: 0 6px 6px 0;
+    padding: 5px 13px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.72);
+    border: 1px solid rgba(23,43,53,.14);
+    color: #2e4450;
+    font-size: .82rem;
+    font-weight: 500;
+    letter-spacing: .02em;
+    backdrop-filter: blur(4px);
+    transition: background .2s;
+}
+
+/* ── sidebar ── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #f5efe4 0%, #eef4f1 100%);
+    border-right: 1px solid rgba(23,43,53,.11);
+}
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    border-bottom: none;
+    font-size: 1.05rem !important;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: #8a7060 !important;
+    margin-top: 1.4em !important;
+}
+[data-testid="stSidebar"] .stSlider label,
+[data-testid="stSidebar"] .stRadio label {
+    font-size: .88rem !important;
+    color: #3a4f58 !important;
+}
+
+/* ── images ── */
+div[data-testid="stImage"] img {
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(16,30,38,.12), 0 1px 4px rgba(16,30,38,.06);
+    transition: box-shadow .25s;
+}
+div[data-testid="stImage"] img:hover {
+    box-shadow: 0 16px 48px rgba(16,30,38,.18), 0 2px 8px rgba(16,30,38,.08);
+}
+
+/* ── metric cards ── */
+.metrics-row { display: flex; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+.metric {
+    flex: 1 1 0;
+    min-width: 90px;
+    background: rgba(255,255,255,.75);
+    border: 1px solid rgba(23,43,53,.10);
+    border-radius: 14px;
+    padding: 16px 18px 14px;
+    backdrop-filter: blur(6px);
+    box-shadow: 0 2px 12px rgba(16,30,38,.06);
+}
+.metric-value {
+    font-family: 'Cormorant Garamond', serif;
+    color: #111e26;
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1;
+}
+.metric-label {
+    color: #7a8f98;
+    font-size: .78rem;
+    font-weight: 500;
+    letter-spacing: .03em;
+    margin-top: 5px;
+}
+
+/* ── section label (above subheaders) ── */
+.section-label {
+    font-size: .72rem;
+    font-weight: 500;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: #1d44a0;
+    margin-bottom: -.4em;
+}
+
+/* ── download buttons ── */
+[data-testid="stDownloadButton"] button {
+    background: rgba(255,255,255,.7) !important;
+    border: 1px solid rgba(23,43,53,.14) !important;
+    color: #1a2e38 !important;
+    border-radius: 10px !important;
+    font-size: .84rem !important;
+    font-weight: 500 !important;
+    padding: 6px 16px !important;
+    transition: background .2s, box-shadow .2s !important;
+}
+[data-testid="stDownloadButton"] button:hover {
+    background: rgba(255,255,255,.95) !important;
+    box-shadow: 0 4px 16px rgba(16,30,38,.10) !important;
+}
+
+/* ── tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 4px;
+    background: rgba(255,255,255,.4);
+    border-radius: 12px;
+    padding: 4px;
+    border: 1px solid rgba(23,43,53,.09);
+}
+.stTabs [data-baseweb="tab"] {
+    border-radius: 9px !important;
+    font-size: .88rem !important;
+    font-weight: 500 !important;
+    color: #4a6370 !important;
+    padding: 6px 18px !important;
+}
+.stTabs [aria-selected="true"] {
+    background: white !important;
+    color: #111e26 !important;
+    box-shadow: 0 2px 8px rgba(16,30,38,.10) !important;
+}
+
+/* ── divider ── */
+hr { border-color: rgba(23,43,53,.09) !important; margin: 2rem 0 !important; }
+
+/* ── tab content text ── */
+.how-it-works p { line-height: 1.7; color: #3a4f58; font-size: .97rem; }
+.how-it-works strong { color: #111e26; }
+</style>
+""",
     unsafe_allow_html=True,
 )
 
@@ -158,37 +337,6 @@ def make_mask(image: Image.Image, sensitivity: int, close_size: int) -> np.ndarr
     return cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8), iterations=1)
 
 
-def contour_to_symbol(contour: np.ndarray, box: tuple[int, int, int, int], color=INK) -> Image.Image:
-    """
-    Превращает найденный контур в чистый элемент орнамента.
-    Важно: генератор дальше работает именно с этим символом, а не с куском исходной маски.
-    """
-    x1, y1, x2, y2 = box
-    width, height = x2 - x1, y2 - y1
-    scale = 4
-
-    local = contour.copy().astype(np.float32)
-    local[:, 0, 0] -= x1
-    local[:, 0, 1] -= y1
-
-    perimeter = cv2.arcLength(local, True)
-    epsilon = max(1.2, perimeter * 0.008)
-    approx = cv2.approxPolyDP(local, epsilon, True)
-
-    alpha_big = np.zeros((height * scale, width * scale), dtype=np.uint8)
-    approx_big = np.round(approx * scale).astype(np.int32)
-    cv2.drawContours(alpha_big, [approx_big], -1, 255, thickness=cv2.FILLED)
-
-    # Небольшое закрытие делает символ цельным, а уменьшение LANCZOS убирает пиксельные ступеньки.
-    kernel = np.ones((3, 3), np.uint8)
-    alpha_big = cv2.morphologyEx(alpha_big, cv2.MORPH_CLOSE, kernel, iterations=1)
-    alpha = Image.fromarray(alpha_big, "L").resize((width, height), Image.Resampling.LANCZOS)
-
-    symbol_image = Image.new("RGBA", (width, height), rgba(color))
-    symbol_image.putalpha(alpha)
-    return symbol_image
-
-
 def extract_elements(image: Image.Image, mask: np.ndarray, min_area: int, padding: int) -> list[dict]:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     elements = []
@@ -199,20 +347,12 @@ def extract_elements(image: Image.Image, mask: np.ndarray, min_area: int, paddin
         x, y, w, h = cv2.boundingRect(contour)
         if w < 16 or h < 16 or (w > image.width * .94 and h > image.height * .94):
             continue
-
         x1, y1 = max(0, x - padding), max(0, y - padding)
         x2, y2 = min(image.width, x + w + padding), min(image.height, y + h + padding)
-
-        clean_symbol = contour_to_symbol(contour, (x1, y1, x2, y2))
-        source_crop = image.crop((x1, y1, x2, y2)).convert("RGBA")
-
-        elements.append({
-            "image": clean_symbol,
-            "source": source_crop,
-            "box": (x1, y1, x2, y2),
-            "area": area,
-            "points": len(cv2.approxPolyDP(contour, max(1.2, cv2.arcLength(contour, True) * 0.008), True)),
-        })
+        crop = image.crop((x1, y1, x2, y2)).convert("RGBA")
+        alpha = Image.fromarray(mask[y1:y2, x1:x2], "L").filter(ImageFilter.GaussianBlur(.7))
+        crop.putalpha(alpha)
+        elements.append({"image": crop, "box": (x1, y1, x2, y2), "area": area})
     elements.sort(key=lambda item: (item["box"][1], item["box"][0]))
     return elements[:48]
 
@@ -277,12 +417,30 @@ def place(canvas: Image.Image, image: Image.Image, center, size: int, angle: flo
     canvas.alpha_composite(icon, (int(center[0] - icon.width / 2), int(center[1] - icon.height / 2)))
 
 
-def tint_element(image: Image.Image, color: tuple[int, int, int]) -> Image.Image:
+def prepare_element(image: Image.Image, size: int, angle: float = 0, enhance: bool = True) -> Image.Image:
+    """Resize + optionally sharpen, keep original colours, then rotate."""
     icon = image.copy().convert("RGBA")
-    alpha = icon.getchannel("A").filter(ImageFilter.GaussianBlur(.2))
-    tinted = Image.new("RGBA", icon.size, rgba(color))
-    tinted.putalpha(alpha)
-    return tinted
+    icon.thumbnail((size, size), Image.Resampling.LANCZOS)
+    if enhance:
+        rgb = icon.convert("RGB")
+        rgb = ImageEnhance.Contrast(rgb).enhance(1.15)
+        rgb = ImageEnhance.Color(rgb).enhance(1.1)
+        result = rgb.convert("RGBA")
+        result.putalpha(icon.getchannel("A"))
+        icon = result
+    if angle:
+        icon = icon.rotate(angle, expand=True, resample=Image.Resampling.BICUBIC)
+    return icon
+
+
+def draw_diamond(draw, cx, cy, r, color, width=2):
+    pts = [(cx, cy - r), (cx + r, cy), (cx, cy + r), (cx - r, cy)]
+    draw.polygon(pts, outline=rgba(color, 200), width=width)
+
+
+def draw_cross(draw, cx, cy, r, color, width=2):
+    draw.line((cx - r, cy, cx + r, cy), fill=rgba(color, 160), width=width)
+    draw.line((cx, cy - r, cx, cy + r), fill=rgba(color, 160), width=width)
 
 
 def fallback_elements() -> list[dict]:
@@ -290,101 +448,284 @@ def fallback_elements() -> list[dict]:
     return extract_elements(image, make_mask(image, 232, 11), 520, 12)
 
 
+# ─────────────────────────────────────────────
+#  RIBBON  — horizontal decorative band
+# ─────────────────────────────────────────────
 def generate_ribbon(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
     elements = elements or fallback_elements()
     colors = colors or [INK]
-    image = Image.new("RGBA", (1200, 330), rgba(PAPER))
-    draw = ImageDraw.Draw(image)
-    c1, c2 = colors[0], colors[min(1, len(colors) - 1)]
-    draw.rectangle((0, 0, 1200, 20), fill=rgba(c1))
-    draw.rectangle((0, 310, 1200, 330), fill=rgba(c2))
-    draw.line((0, 54, 1200, 54), fill=rgba(c2), width=6)
-    draw.line((0, 276, 1200, 276), fill=rgba(c1), width=6)
-    for x in range(22, 1200, 56):
-        draw.polygon((x, 34, x + 15, 18, x + 30, 34, x + 15, 50), fill=rgba(c2 if x // 56 % 2 else c1))
-        draw.polygon((x, 296, x + 15, 280, x + 30, 296, x + 15, 312), fill=rgba(c1 if x // 56 % 2 else c2))
-    for i, x in enumerate(range(70, 1200, 120)):
-        color = colors[i % len(colors)]
-        icon = tint_element(elements[i % len(elements)]["image"], color)
-        place(image, icon, (x, 165), 106, 0 if i % 2 == 0 else 180)
-        draw.ellipse((x - 8, 74, x + 8, 90), fill=rgba(c2))
-        draw.ellipse((x - 8, 240, x + 8, 256), fill=rgba(c1))
-    return image
+    W, H = 1280, 360
+    c0 = colors[0]
+    c1 = colors[min(1, len(colors) - 1)]
+    c2 = colors[min(2, len(colors) - 1)]
+
+    img = Image.new("RGBA", (W, H), rgba(PAPER))
+    draw = ImageDraw.Draw(img)
+
+    # warm parchment background with subtle stripe
+    for y in range(H):
+        t = y / H
+        r = int(250 - t * 6)
+        g = int(248 - t * 4)
+        b = int(238 - t * 8)
+        draw.line((0, y, W, y), fill=(r, g, b, 255))
+
+    # outer frame lines
+    border_h = 18
+    draw.rectangle((0, 0, W, border_h), fill=rgba(c0))
+    draw.rectangle((0, H - border_h, W, H), fill=rgba(c0))
+
+    # inner accent lines
+    draw.line((0, border_h + 8, W, border_h + 8), fill=rgba(c1, 180), width=3)
+    draw.line((0, H - border_h - 8, W, H - border_h - 8), fill=rgba(c1, 180), width=3)
+    draw.line((0, border_h + 18, W, border_h + 18), fill=rgba(c2, 120), width=2)
+    draw.line((0, H - border_h - 18, W, H - border_h - 18), fill=rgba(c2, 120), width=2)
+
+    # zigzag row top
+    step = 40
+    for x in range(0, W, step * 2):
+        pts = [(x, border_h + 28), (x + step, border_h + 44), (x + step * 2, border_h + 28)]
+        draw.line(pts, fill=rgba(c1, 200), width=3)
+    # zigzag row bottom (mirrored)
+    for x in range(0, W, step * 2):
+        pts = [(x, H - border_h - 28), (x + step, H - border_h - 44), (x + step * 2, H - border_h - 28)]
+        draw.line(pts, fill=rgba(c1, 200), width=3)
+
+    # small diamond row top & bottom
+    for x in range(20, W, step):
+        draw_diamond(draw, x, border_h + 36, 6, c2)
+    for x in range(20, W, step):
+        draw_diamond(draw, x, H - border_h - 36, 6, c2)
+
+    # main element strip — centred
+    cy = H // 2
+    n_elem = min(len(elements), 10)
+    spacing = W // (n_elem + 1)
+    for i in range(n_elem):
+        elem = elements[i % len(elements)]
+        cx = spacing * (i + 1)
+        angle = (-12 if i % 2 == 0 else 12)
+        sz = 120 if i % 3 == 0 else 96
+        icon = prepare_element(elem["image"], sz, angle)
+        img.alpha_composite(icon, (cx - icon.width // 2, cy - icon.height // 2))
+
+        # decorative dot above and below each element
+        draw.ellipse((cx - 5, cy - sz // 2 - 20, cx + 5, cy - sz // 2 - 10), fill=rgba(colors[i % len(colors)]))
+        draw.ellipse((cx - 5, cy + sz // 2 + 10, cx + 5, cy + sz // 2 + 20), fill=rgba(colors[(i + 1) % len(colors)]))
+
+    # vertical dividers between elements
+    for i in range(1, n_elem):
+        x = spacing * i + spacing // 2
+        draw.line((x, cy - 48, x, cy + 48), fill=rgba(c2, 80), width=1)
+
+    return img
 
 
+# ─────────────────────────────────────────────
+#  FABRIC / GRID
+# ─────────────────────────────────────────────
 def generate_fabric(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
     elements = elements or fallback_elements()
     colors = colors or [INK]
-    image = Image.new("RGBA", (980, 680), (248, 246, 239, 255))
-    draw = ImageDraw.Draw(image)
-    for y in range(0, 680, 108):
-        for x in range(0, 980, 108):
-            fill = (255, 255, 250, 255) if (x + y) // 108 % 2 == 0 else (237, 244, 242, 255)
-            draw.rectangle((x, y, x + 108, y + 108), fill=fill)
-            draw.line((x, y + 108, x + 108, y), fill=(224, 218, 204, 255), width=1)
-    for row, y in enumerate(range(54, 680, 108)):
-        offset = 54 if row % 2 else 0
-        for col, x in enumerate(range(54 + offset, 980, 108)):
-            color = colors[(row + col) % len(colors)]
-            icon = tint_element(elements[(row * 8 + col) % len(elements)]["image"], color)
-            place(image, icon, (x, y), 80, 0 if (row + col) % 2 == 0 else 180)
-    for i, color in enumerate(colors[:4]):
-        draw.rounded_rectangle((22 + i * 8, 22 + i * 8, 958 - i * 8, 658 - i * 8), radius=20, outline=rgba(color), width=3)
-    return image
+    W, H = 1080, 720
+    CELL = 120
+    cols = W // CELL
+    rows = H // CELL
+
+    img = Image.new("RGBA", (W, H), rgba(PAPER))
+    draw = ImageDraw.Draw(img)
+
+    # checkerboard background
+    bg_a = (252, 250, 243, 255)
+    bg_b = (240, 246, 242, 255)
+    for row in range(rows):
+        for col in range(cols):
+            fill = bg_a if (row + col) % 2 == 0 else bg_b
+            draw.rectangle((col * CELL, row * CELL, (col + 1) * CELL - 1, (row + 1) * CELL - 1), fill=fill)
+
+    # draw subtle grid lines
+    c_grid = colors[min(1, len(colors) - 1)]
+    for x in range(0, W + 1, CELL):
+        draw.line((x, 0, x, H), fill=rgba(c_grid, 40), width=1)
+    for y in range(0, H + 1, CELL):
+        draw.line((0, y, W, y), fill=rgba(c_grid, 40), width=1)
+
+    # place elements — every cell gets one
+    for row in range(rows):
+        for col in range(cols):
+            cx = col * CELL + CELL // 2
+            cy = row * CELL + CELL // 2
+            idx = (row * cols + col) % len(elements)
+            color_idx = (row + col) % len(colors)
+            alt = (row + col) % 4
+
+            # every other cell: place element; the rest: decorative motif
+            if (row + col) % 2 == 0:
+                angle = (col - row) * 15 % 360
+                icon = prepare_element(elements[idx]["image"], CELL - 16, angle)
+                img.alpha_composite(icon, (cx - icon.width // 2, cy - icon.height // 2))
+            else:
+                # decorative fill: nested diamonds / crosses
+                r = CELL // 2 - 12
+                draw_diamond(draw, cx, cy, r, colors[color_idx], width=2)
+                draw_diamond(draw, cx, cy, r - 10, colors[(color_idx + 1) % len(colors)], width=1)
+                draw.ellipse((cx - 4, cy - 4, cx + 4, cy + 4), fill=rgba(colors[color_idx], 180))
+
+    # multi-layer border
+    c0 = colors[0]
+    c1 = colors[min(1, len(colors) - 1)]
+    for offset, color, w in [(0, c0, 6), (8, c1, 3), (16, c0, 2)]:
+        draw.rectangle((offset, offset, W - offset, H - offset), outline=rgba(color, 200), width=w)
+
+    return img
 
 
+# ─────────────────────────────────────────────
+#  CIRCLE / MANDALA
+# ─────────────────────────────────────────────
 def generate_circle(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
     elements = elements or fallback_elements()
     colors = colors or [INK]
-    image = Image.new("RGBA", (760, 760), rgba(PAPER))
-    draw = ImageDraw.Draw(image)
-    c1, c2 = colors[0], colors[min(1, len(colors) - 1)]
-    draw.ellipse((60, 60, 700, 700), outline=rgba(c1), width=8)
-    draw.ellipse((112, 112, 648, 648), outline=rgba(c2), width=3)
-    draw.ellipse((184, 184, 576, 576), outline=rgba(c1), width=5)
-    for i in range(24):
-        angle = 2 * pi * i / 24
-        x1 = 380 + int(cos(angle) * 326)
-        y1 = 380 + int(sin(angle) * 326)
-        x2 = 380 + int(cos(angle) * 286)
-        y2 = 380 + int(sin(angle) * 286)
-        draw.line((x1, y1, x2, y2), fill=rgba(c2 if i % 2 else c1), width=3)
-    for ring, radius in enumerate([112, 214, 304]):
-        count = 8 + ring * 4
+    SIZE = 840
+    cx = cy = SIZE // 2
+
+    img = Image.new("RGBA", (SIZE, SIZE), rgba(PAPER))
+    draw = ImageDraw.Draw(img)
+
+    # soft radial background gradient
+    for r in range(SIZE // 2, 0, -1):
+        t = r / (SIZE // 2)
+        val = int(250 - t * 10)
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(val, val + 2, val - 4, 255))
+
+    c0 = colors[0]
+    c1 = colors[min(1, len(colors) - 1)]
+    c2 = colors[min(2, len(colors) - 1)]
+    c3 = colors[min(3, len(colors) - 1)]
+
+    # concentric decorative rings
+    ring_specs = [
+        (380, c0, 7),
+        (340, c1, 3),
+        (295, c0, 5),
+        (238, c2, 3),
+        (180, c1, 4),
+        (120, c0, 3),
+        (60,  c2, 5),
+    ]
+    for r, color, w in ring_specs:
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=rgba(color, 200), width=w)
+
+    # tick marks on outer ring
+    for i in range(48):
+        angle = 2 * pi * i / 48
+        r_outer, r_inner = 388, (375 if i % 4 == 0 else 382)
+        x1 = cx + cos(angle) * r_outer
+        y1 = cy + sin(angle) * r_outer
+        x2 = cx + cos(angle) * r_inner
+        y2 = cy + sin(angle) * r_inner
+        col = c0 if i % 4 == 0 else c1
+        draw.line((x1, y1, x2, y2), fill=rgba(col, 200), width=(3 if i % 4 == 0 else 1))
+
+    # diamond accents on ring 340
+    for i in range(16):
+        angle = 2 * pi * i / 16
+        px = cx + cos(angle) * 340
+        py = cy + sin(angle) * 340
+        draw_diamond(draw, int(px), int(py), 7, colors[i % len(colors)], width=2)
+
+    # ── three rings of elements ──
+    ring_data = [
+        (6,  115, 84),   # innermost: 6 elements, r=115, size=84
+        (10, 198, 68),   # middle:    10 elements
+        (16, 295, 52),   # outer:     16 elements
+    ]
+    for ring_idx, (count, radius, sz) in enumerate(ring_data):
         for i in range(count):
-            angle = 2 * pi * i / count
-            x = 380 + int(cos(angle) * radius)
-            y = 380 + int(sin(angle) * radius)
-            color = colors[(i + ring) % len(colors)]
-            icon = tint_element(elements[(i + ring * 3) % len(elements)]["image"], color)
-            place(image, icon, (x, y), 84 - ring * 6, angle * 180 / pi + 90)
-    draw.ellipse((334, 334, 426, 426), fill=rgba(c1))
-    draw.ellipse((356, 356, 404, 404), fill=rgba(PAPER))
-    return image
+            angle = 2 * pi * i / count + ring_idx * pi / count  # offset each ring
+            px = cx + cos(angle) * radius
+            py = cy + sin(angle) * radius
+            elem_idx = (ring_idx * 7 + i) % len(elements)
+            rotation = angle * 180 / pi + 90
+            icon = prepare_element(elements[elem_idx]["image"], sz, rotation)
+            img.alpha_composite(icon, (int(px - icon.width / 2), int(py - icon.height / 2)))
+
+            # small dot between elements on outer ring
+            if ring_idx == 2:
+                half_angle = 2 * pi * (i + 0.5) / count + ring_idx * pi / count
+                dx = cx + cos(half_angle) * radius
+                dy = cy + sin(half_angle) * radius
+                r_dot = 4
+                draw.ellipse((dx - r_dot, dy - r_dot, dx + r_dot, dy + r_dot),
+                             fill=rgba(colors[(ring_idx + i) % len(colors)], 200))
+
+    # centre ornament
+    draw.ellipse((cx - 38, cy - 38, cx + 38, cy + 38), fill=rgba(c0))
+    draw.ellipse((cx - 26, cy - 26, cx + 26, cy + 26), fill=rgba(PAPER))
+    draw.ellipse((cx - 13, cy - 13, cx + 13, cy + 13), fill=rgba(c1))
+    draw.ellipse((cx - 5,  cy - 5,  cx + 5,  cy + 5),  fill=rgba(c0))
+
+    return img
 
 
+# ─────────────────────────────────────────────
+#  POSTER — showcase of all three
+# ─────────────────────────────────────────────
 def generate_poster(elements: list[dict], colors: list[tuple[int, int, int]]) -> Image.Image:
     elements = elements or fallback_elements()
     colors = colors or [INK]
-    poster = Image.new("RGBA", (1200, 760), (255, 252, 244, 255))
+    W, H = 1320, 860
+    c0 = colors[0]
+    c1 = colors[min(1, len(colors) - 1)]
+
+    poster = Image.new("RGBA", (W, H), (252, 250, 243, 255))
     draw = ImageDraw.Draw(poster)
-    c1, c2 = colors[0], colors[min(1, len(colors) - 1)]
-    draw.rounded_rectangle((24, 24, 1176, 736), radius=30, fill=(250, 248, 240, 255), outline=rgba(c1), width=5)
-    ribbon = generate_ribbon(elements, colors).resize((1080, 250), Image.Resampling.LANCZOS)
-    poster.alpha_composite(ribbon, (60, 52))
-    fabric = generate_fabric(elements, colors).resize((430, 300), Image.Resampling.LANCZOS)
-    poster.alpha_composite(fabric, (58, 394))
-    circle = generate_circle(elements, colors).resize((390, 390), Image.Resampling.LANCZOS)
-    poster.alpha_composite(circle, (710, 330))
-    for index, item in enumerate(elements[:7]):
-        x = 560 + index * 26
-        y = 406 + (index % 2) * 118
-        color = colors[index % len(colors)]
-        icon = tint_element(item["image"], color)
-        place(poster, icon, (x, y), 96, -18 if index % 2 else 18)
-    draw.line((540, 350, 540, 700), fill=rgba(c2), width=5)
-    draw.line((680, 350, 680, 700), fill=rgba(c1), width=5)
-    draw.text((560, 326), "Новый узор из найденных фрагментов", fill=(28, 44, 52, 255))
+
+    # subtle background gradient
+    for y in range(H):
+        t = y / H
+        val = int(252 - t * 8)
+        draw.line((0, y, W, y), fill=(val, val, val - 4, 255))
+
+    # decorative frame
+    for offset, color, w in [(0, c0, 8), (10, c1, 3), (20, c0, 2)]:
+        draw.rectangle((offset, offset, W - offset, H - offset), outline=rgba(color, 220), width=w)
+
+    # ribbon at top
+    ribbon = generate_ribbon(elements, colors).resize((W - 80, 230), Image.Resampling.LANCZOS)
+    poster.alpha_composite(ribbon, (40, 40))
+
+    # divider after ribbon
+    draw.line((60, 285, W - 60, 285), fill=rgba(c1, 120), width=2)
+
+    # fabric on left bottom
+    fabric = generate_fabric(elements, colors).resize((520, 520), Image.Resampling.LANCZOS)
+    poster.alpha_composite(fabric, (40, 310))
+
+    # circle on right bottom
+    circle = generate_circle(elements, colors).resize((520, 520), Image.Resampling.LANCZOS)
+    poster.alpha_composite(circle, (W - 560, 310))
+
+    # centre column: a few free-floating elements
+    mid_x = W // 2
+    for i, item in enumerate(elements[:6]):
+        x = mid_x + ((-1) ** i) * 40
+        y = 330 + i * 82
+        angle = 20 * ((-1) ** i)
+        sz = 88 if i % 2 == 0 else 70
+        icon = prepare_element(item["image"], sz, angle)
+        poster.alpha_composite(icon, (x - icon.width // 2, y))
+
+    # vertical accent lines flanking the centre column
+    draw.line((mid_x - 72, 300, mid_x - 72, 820), fill=rgba(c0, 80), width=3)
+    draw.line((mid_x + 72, 300, mid_x + 72, 820), fill=rgba(c1, 80), width=3)
+    draw.line((mid_x - 82, 300, mid_x - 82, 820), fill=rgba(c1, 40), width=1)
+    draw.line((mid_x + 82, 300, mid_x + 82, 820), fill=rgba(c0, 40), width=1)
+
+    # caption
+    caption = "Витрина: лента · сетка · круговой орнамент"
+    draw.text((mid_x - 170, 828), caption, fill=rgba(INK, 160))
+
     return poster
 
 
@@ -400,60 +741,96 @@ def period(mask: np.ndarray) -> int:
     return int(np.argmax(corr[: mask.shape[1] // 2])) if corr.max() > 0 else 0
 
 
+# ═══════════════════════════════════════
+#  SIDEBAR
+# ═══════════════════════════════════════
 with st.sidebar:
     st.subheader("Источник")
     source_mode = st.radio("Изображение", [*SAMPLE_SOURCES.keys(), "Загрузить свое"])
     upload = st.file_uploader("PNG, JPG, WEBP", type=["png", "jpg", "jpeg", "webp"], disabled=source_mode != "Загрузить свое")
+
     st.subheader("Распознавание")
     sensitivity = st.slider("Чувствительность к фону", 170, 248, 232)
-    close_size = st.slider("Склеивание линий", 3, 25, 11, step=2)
-    min_area = st.slider("Минимальный размер фрагмента", 80, 5000, 520)
-    padding = st.slider("Отступ вокруг фрагмента", 2, 32, 12)
+    close_size  = st.slider("Склеивание линий", 3, 25, 3, step=2)
+    min_area    = st.slider("Минимальный размер фрагмента", 80, 5000, 520)
+    padding     = st.slider("Отступ вокруг фрагмента", 2, 32, 12)
 
 
+# ═══════════════════════════════════════
+#  HEADER
+# ═══════════════════════════════════════
 st.markdown(
     """
-    <h1>OrnaMap Vision</h1>
-    <p class="lead">Лаборатория компьютерного зрения для орнаментов: программа отделяет узор от фона,
-    находит контуры, вырезает отдельные элементы, определяет палитру и собирает новые композиции.</p>
-    <span class="chip">OpenCV</span><span class="chip">контуры</span><span class="chip">сегментация</span>
-    <span class="chip">KMeans</span><span class="chip">генерация паттернов</span>
-    """,
+<div class="hero">
+  <div class="hero-eyebrow">Компьютерное зрение · Орнаменты · Северные мотивы</div>
+  <h1>OrnaMap Vision</h1>
+  <p class="lead">Изображение превращается в массив пикселей — и дальше в дело вступает алгоритм.
+  OpenCV строит маску, находит контуры каждого элемента и вырезает его с прозрачным фоном.
+  KMeans собирает палитру. Из найденных фрагментов рождаются новые орнаменты.</p>
+  <div class="chip-row">
+    <span class="chip">OpenCV</span>
+    <span class="chip">контуры</span>
+    <span class="chip">сегментация</span>
+    <span class="chip">KMeans</span>
+    <span class="chip">генерация паттернов</span>
+  </div>
+</div>
+""",
     unsafe_allow_html=True,
 )
 
-source = load_source(upload, source_mode)
-mask = make_mask(source, sensitivity, close_size)
+source   = load_source(upload, source_mode)
+mask     = make_mask(source, sensitivity, close_size)
 elements = extract_elements(source, mask, min_area, padding)
-colors = palette(source, mask)
-repeat = period(mask)
-fill = int((mask > 0).mean() * 100)
-board = element_board(elements, colors)
-poster = generate_poster(elements, colors)
-ribbon = generate_ribbon(elements, colors)
-fabric = generate_fabric(elements, colors)
-circle = generate_circle(elements, colors)
+colors   = palette(source, mask)
+repeat   = period(mask)
+fill     = int((mask > 0).mean() * 100)
+board    = element_board(elements, colors)
+poster   = generate_poster(elements, colors)
+ribbon   = generate_ribbon(elements, colors)
+fabric   = generate_fabric(elements, colors)
+circle   = generate_circle(elements, colors)
 
+# ═══════════════════════════════════════
+#  MAIN LAYOUT
+# ═══════════════════════════════════════
 left, right = st.columns([1, 1.2])
+
 with left:
+    st.markdown('<div class="section-label">Входные данные</div>', unsafe_allow_html=True)
     st.subheader("Исходное изображение")
     st.image(source, width="stretch")
     st.markdown(
         f"""
-        <div class="metric"><b>{len(elements)}</b><br><span>найденных фрагментов</span></div>
-        <div class="metric"><b>{fill}%</b><br><span>площадь узора на изображении</span></div>
-        <div class="metric"><b>{repeat if repeat else "нет"}</b><br><span>примерный период по горизонтали</span></div>
-        """,
+<div class="metrics-row">
+  <div class="metric">
+    <div class="metric-value">{len(elements)}</div>
+    <div class="metric-label">фрагментов найдено</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value">{fill}%</div>
+    <div class="metric-label">площадь узора</div>
+  </div>
+  <div class="metric">
+    <div class="metric-value">{repeat if repeat else "—"}</div>
+    <div class="metric-label">период, px</div>
+  </div>
+</div>
+""",
         unsafe_allow_html=True,
     )
 
 with right:
+    st.markdown('<div class="section-label">Распознавание</div>', unsafe_allow_html=True)
     st.subheader("Найденные элементы")
     st.image(board, width="stretch")
     st.download_button("Скачать карточку элементов", data=png_bytes(board), file_name="ornamap_elements.png", mime="image/png")
+
+    st.markdown('<div class="section-label">Генерация</div>', unsafe_allow_html=True)
     st.subheader("Новые орнаменты из этих элементов")
-    st.image(poster, caption="Витрина: лента, сетка и круговая композиция вместе", width="stretch")
+    st.image(poster, caption="Витрина: лента, сетка и круговой орнамент", width="stretch")
     st.download_button("Скачать витрину PNG", data=png_bytes(poster), file_name="ornamap_showcase.png", mime="image/png")
+
     gen_a, gen_b, gen_c = st.tabs(["Лента", "Сетка", "Круг"])
     with gen_a:
         st.image(ribbon, width="stretch")
@@ -466,33 +843,31 @@ with right:
         st.download_button("Скачать круг", data=png_bytes(circle), file_name="ornamap_circle.png", mime="image/png")
 
 st.divider()
-tab_steps, tab_science = st.tabs(["Как видит программа", "Для защиты"])
+
+tab_steps, tab_science = st.tabs(["Как видит программа", "О проекте"])
 
 with tab_steps:
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    c1_col, c2_col, c3_col = st.columns(3)
+    with c1_col:
         st.image(mask_view(mask), caption="1. Маска: узор отделен от фона", width="stretch")
-    with c2:
+    with c2_col:
         st.image(contour_view(source, mask), caption="2. Контуры найденных фрагментов", width="stretch")
-    with c3:
+    with c3_col:
         swatches = Image.new("RGBA", (820, 240), (255, 253, 246, 255))
-        draw = ImageDraw.Draw(swatches)
+        draw_sw = ImageDraw.Draw(swatches)
         for i, color in enumerate(colors):
-            draw.rounded_rectangle((42 + i * 145, 58, 142 + i * 145, 158), radius=20, fill=rgba(color), outline=(190, 180, 165, 255), width=2)
-            draw.text((42 + i * 145, 174), f"RGB {color}", fill=(43, 58, 65, 255))
+            draw_sw.rounded_rectangle((42 + i * 145, 58, 142 + i * 145, 158), radius=20, fill=rgba(color), outline=(190, 180, 165, 255), width=2)
+            draw_sw.text((42 + i * 145, 174), f"RGB {color}", fill=(43, 58, 65, 255))
         st.image(swatches, caption="3. Палитра KMeans", width="stretch")
 
 with tab_science:
     st.markdown(
         """
-        **Что происходит внутри:** изображение переводится в массив пикселей, затем OpenCV строит маску объектов
-        на светлом фоне. После этого программа ищет внешние контуры, обрезает каждый найденный фрагмент и делает
-        его прозрачным по маске.
-
-        **Почему это выглядит убедительно:** на экране виден весь путь исследования: исходник, маска, контуры,
-        найденные элементы, палитра и новые орнаменты из этих элементов.
-
-        **Фраза для защиты:** я не рисую орнамент вручную в редакторе, а показываю, как алгоритм компьютерного
-        зрения может распознать элементы народного узора и использовать их как цифровой материал для нового дизайна.
-        """
+<div class="how-it-works">
+<p><strong>Что происходит внутри:</strong> изображение превращается в массив пикселей — и дальше в дело вступает алгоритм. OpenCV строит маску, отделяя узор от фона, затем находит контуры каждого элемента, вырезает его с прозрачным фоном и передаёт в следующий шаг. KMeans анализирует цвета и собирает палитру орнамента.</p>
+<p><strong>Что вы видите на экране:</strong> весь путь от исходного изображения до результата — маска, контуры, отдельные фрагменты, палитра и новые орнаменты, собранные из найденных элементов.</p>
+<p><strong>Идея проекта:</strong> орнамент — это не просто картинка. Это структура, которую можно распознать, разобрать на части и пересобрать заново. Программа делает именно это: находит элементы народного узора и использует их как цифровой материал для создания новых композиций.</p>
+</div>
+""",
+        unsafe_allow_html=True,
     )
