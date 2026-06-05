@@ -18,9 +18,9 @@ INK = (14, 16, 15)
 PAPER = (250, 249, 243)
 
 SAMPLE_SOURCES = {
-    "s1.jpg": Path("sample/s1.jpg"),
+    "s1.jpg": Path("sample/s3.jpg"),
     "s2.jpg": Path("sample/s2.jpg"),
-    "s3.jpg": Path("sample/s3.jpg"),
+    "s3.jpg": Path("sample/s1.jpg"),
 }
 
 st.markdown(
